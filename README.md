@@ -7,6 +7,8 @@
 
 当前目标是保持一个可维护、可扩展、便于性能实验的基线实现。
 
+多人 SSH 协作说明见 [COLLABORATION.md](./COLLABORATION.md)。
+
 ## 目录结构
 
 - `run_pennylane_baseline.py`：PennyLane 基线路径入口。
