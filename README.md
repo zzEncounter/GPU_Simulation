@@ -7,7 +7,7 @@
 
 当前目标是保持一个可维护、可扩展、便于性能实验的基线实现。
 
-多人 SSH 协作说明见 [COLLABORATION.md](./COLLABORATION.md)。
+多人协作说明见 [COLLABORATION.md](./COLLABORATION.md)（当前统一远端：`git@github.com:zzEncounter/GPU_Simulation.git`）。
 
 ## 目录结构
 
