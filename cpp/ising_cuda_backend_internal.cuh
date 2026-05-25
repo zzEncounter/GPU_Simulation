@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <cuda_runtime.h>
+#include <cublas_v2.h>
 #include <thrust/complex.h>
 
 namespace standalone_backend {
@@ -16,6 +17,7 @@ using Complex = thrust::complex<double>;
 constexpr int THREADS = 256;
 
 void check_cuda(cudaError_t status, const char *context);
+void check_cublas(cublasStatus_t status, const char *context);
 void maybe_synchronize_cuda(const char *context);
 
 template <typename T> class DeviceBuffer {
@@ -98,6 +100,27 @@ auto fused_ryrz_gradients(const Complex *lambda, const Complex *state,
                           std::size_t state_size, std::size_t wire,
                           double theta_ry, double theta_rz)
     -> std::pair<double, double>;
+
+void launch_fill_identity_matrices(Complex *mats, std::size_t batch,
+                                   std::size_t dim);
+void launch_prepare_downsweep_buffers(Complex *mats,
+                                      const int *left_indices,
+                                      const int *right_indices,
+                                      Complex *left_tmp, std::size_t num_pairs,
+                                      std::size_t mat_elements);
+void launch_scatter_matrices(const Complex *source_mats,
+                             const int *target_indices, Complex *target_mats,
+                             std::size_t batch, std::size_t mat_elements);
+void launch_gather_vectors(const Complex *source_vectors,
+                           const int *source_indices, Complex *target_vectors,
+                           std::size_t batch, std::size_t vector_size);
+void launch_build_adjoint_batch(const Complex *source, Complex *target,
+                                std::size_t batch, std::size_t dim);
+void launch_reduce_real_inner_products(const Complex *lhs,
+                                       const Complex *rhs, double *out,
+                                       std::size_t batch,
+                                       std::size_t vector_size,
+                                       double scale);
 
 } // namespace detail
 } // namespace standalone_backend

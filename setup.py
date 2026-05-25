@@ -98,7 +98,7 @@ ext_modules = [
             str(find_cuda_home() / "include"),
         ],
         language="c++",
-        libraries=["cudart"],
+        libraries=["cudart", "cublas"],
         library_dirs=[str(find_cuda_home() / "lib64")],
         runtime_library_dirs=[str(find_cuda_home() / "lib64")],
         extra_compile_args={

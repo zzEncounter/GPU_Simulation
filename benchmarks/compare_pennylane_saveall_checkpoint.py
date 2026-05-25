@@ -48,6 +48,9 @@ class ModeResult:
     forward_ms: float | None
     total_ms: float | None
     workspace_gib: float | None
+    cpu_reference_ms: float | None
+    gpu_scan_ms: float | None
+    sequential_statevector_ms: float | None
     peak_fb_memory_mib: int | None
     peak_process_memory_mib: int | None
     telemetry_samples: int
@@ -67,6 +70,9 @@ def _flatten_row(case: BenchmarkCase, result: ModeResult) -> dict[str, object]:
         "forward_ms": result.forward_ms,
         "total_ms": result.total_ms,
         "workspace_gib": result.workspace_gib,
+        "cpu_reference_ms": result.cpu_reference_ms,
+        "gpu_scan_ms": result.gpu_scan_ms,
+        "sequential_statevector_ms": result.sequential_statevector_ms,
         "peak_fb_memory_mib": result.peak_fb_memory_mib,
         "peak_process_memory_mib": result.peak_process_memory_mib,
         "telemetry_samples": result.telemetry_samples,
@@ -206,6 +212,9 @@ def _benchmark_pennylane(
             forward_ms=forward_ms,
             total_ms=total_ms,
             workspace_gib=None,
+            cpu_reference_ms=None,
+            gpu_scan_ms=None,
+            sequential_statevector_ms=None,
             peak_fb_memory_mib=peak_fb,
             peak_process_memory_mib=peak_proc,
             telemetry_samples=telemetry_summary.snapshots_collected,
@@ -222,6 +231,9 @@ def _benchmark_pennylane(
             forward_ms=None,
             total_ms=None,
             workspace_gib=None,
+            cpu_reference_ms=None,
+            gpu_scan_ms=None,
+            sequential_statevector_ms=None,
             peak_fb_memory_mib=None,
             peak_process_memory_mib=None,
             telemetry_samples=0,
@@ -252,13 +264,25 @@ def _benchmark_standalone(
     try:
         backend = RingIsingAdjointBackend(config)
         resolution = backend.strategy_resolution
-        energy, grad = backend.energy_and_grad(params_np)
+        dense_diag = (
+            backend.dense_scan_experiment(params_np)
+            if mode == "bruteforce_parallel_q6"
+            else None
+        )
+        if dense_diag is not None:
+            energy = float(dense_diag["energy"])
+            grad = np.asarray(dense_diag["gradient"], dtype=np.float64)
+        else:
+            energy, grad = backend.energy_and_grad(params_np)
         grad_diff = ref.grad - grad
 
         forward_ms = _median_runtime_ms(lambda: backend.energy(params_np), repeats, warmup)
-        total_ms = _median_runtime_ms(lambda: backend.energy_and_grad(params_np), repeats, warmup)
+        total_ms = _median_runtime_ms(
+            lambda: backend.energy_and_grad(params_np), repeats, warmup
+        )
+        heavy_call = lambda: backend.energy_and_grad(params_np)
         telemetry_summary = _capture_telemetry(
-            lambda: backend.energy_and_grad(params_np),
+            heavy_call,
             target_ms=telemetry_target_ms,
             measured_ms=total_ms,
             interval_s=telemetry_interval_s,
@@ -278,6 +302,17 @@ def _benchmark_standalone(
             forward_ms=forward_ms,
             total_ms=total_ms,
             workspace_gib=resolution.estimated_workspace_gib,
+            cpu_reference_ms=(
+                float(dense_diag["cpu_reference_ms"]) if dense_diag is not None else None
+            ),
+            gpu_scan_ms=(
+                float(dense_diag["gpu_scan_ms"]) if dense_diag is not None else None
+            ),
+            sequential_statevector_ms=(
+                float(dense_diag["sequential_statevector_ms"])
+                if dense_diag is not None
+                else None
+            ),
             peak_fb_memory_mib=peak_fb,
             peak_process_memory_mib=peak_proc,
             telemetry_samples=telemetry_summary.snapshots_collected,
@@ -294,6 +329,9 @@ def _benchmark_standalone(
             forward_ms=None,
             total_ms=None,
             workspace_gib=None,
+            cpu_reference_ms=None,
+            gpu_scan_ms=None,
+            sequential_statevector_ms=None,
             peak_fb_memory_mib=None,
             peak_process_memory_mib=None,
             telemetry_samples=0,
@@ -335,12 +373,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--standalone-modes",
         nargs="+",
-        choices=("save_param_states", "checkpoint", "auto"),
+        choices=("save_param_states", "checkpoint", "auto", "bruteforce_parallel_q6"),
         default=["save_param_states", "checkpoint"],
     )
     parser.add_argument(
         "--worker-mode",
-        choices=("pennylane", "save_param_states", "checkpoint", "auto"),
+        choices=(
+            "pennylane",
+            "save_param_states",
+            "checkpoint",
+            "auto",
+            "bruteforce_parallel_q6",
+        ),
         default=None,
     )
     parser.add_argument("--worker-case", type=parse_case, default=None)
@@ -440,7 +484,8 @@ def _print_case(case: BenchmarkCase, results: list[ModeResult]) -> None:
     print(f"{case.num_qubits} qubits x {case.layers} layers")
     header = (
         "  mode         ok   fwd_ms    total_ms  energy_diff   grad_max_diff "
-        "workspace_GiB  peak_fb_MiB  peak_proc_MiB  samples  fusion  note"
+        "workspace_GiB  cpu_ref_ms  gpu_scan_ms  seq_sv_ms  peak_fb_MiB "
+        "peak_proc_MiB  samples  fusion  note"
     )
     print(header)
     for result in results:
@@ -452,6 +497,9 @@ def _print_case(case: BenchmarkCase, results: list[ModeResult]) -> None:
             f"{_fmt_float(result.energy_abs_diff, 3):>12} "
             f"{_fmt_float(result.grad_max_abs_diff, 3):>15} "
             f"{_fmt_float(result.workspace_gib, 2):>13} "
+            f"{_fmt_float(result.cpu_reference_ms):>11} "
+            f"{_fmt_float(result.gpu_scan_ms):>12} "
+            f"{_fmt_float(result.sequential_statevector_ms):>10} "
             f"{_fmt_int(result.peak_fb_memory_mib):>12} "
             f"{_fmt_int(result.peak_process_memory_mib):>14} "
             f"{result.telemetry_samples:>7}  "
@@ -475,6 +523,9 @@ def _write_csv(rows: list[dict[str, object]], path: Path) -> None:
         "forward_ms",
         "total_ms",
         "workspace_gib",
+        "cpu_reference_ms",
+        "gpu_scan_ms",
+        "sequential_statevector_ms",
         "peak_fb_memory_mib",
         "peak_process_memory_mib",
         "telemetry_samples",
@@ -489,8 +540,8 @@ def _write_csv(rows: list[dict[str, object]], path: Path) -> None:
 def _write_markdown(rows: list[dict[str, object]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "| qubits | layers | mode | ok | fwd_ms | total_ms | energy_diff | grad_max_diff | workspace_gib | peak_fb_mib | peak_proc_mib | samples | fusion | note |",
-        "|---:|---:|---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---|",
+        "| qubits | layers | mode | ok | fwd_ms | total_ms | energy_diff | grad_max_diff | workspace_gib | cpu_ref_ms | gpu_scan_ms | seq_sv_ms | peak_fb_mib | peak_proc_mib | samples | fusion | note |",
+        "|---:|---:|---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---|",
     ]
     for row in rows:
         lines.append(
@@ -506,6 +557,9 @@ def _write_markdown(rows: list[dict[str, object]], path: Path) -> None:
                     _fmt_float(row["energy_abs_diff"], 3),
                     _fmt_float(row["grad_max_abs_diff"], 3),
                     _fmt_float(row["workspace_gib"], 2),
+                    _fmt_float(row["cpu_reference_ms"]),
+                    _fmt_float(row["gpu_scan_ms"]),
+                    _fmt_float(row["sequential_statevector_ms"]),
                     _fmt_int(row["peak_fb_memory_mib"]),
                     _fmt_int(row["peak_process_memory_mib"]),
                     str(row["telemetry_samples"]),

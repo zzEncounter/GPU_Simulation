@@ -76,3 +76,20 @@ class RingIsingAdjointBackend:
         flat = self._normalize_params(params)
         energy, grad = self._cuda.energy_and_grad(flat)
         return float(energy), np.asarray(grad, dtype=np.float64).reshape(self.config.param_shape)
+
+    def dense_scan_experiment(self, params: np.ndarray) -> dict[str, np.ndarray | float]:
+        """Run the q<=6 brute-force dense scan experiment and return diagnostics."""
+
+        flat = self._normalize_params(params)
+        raw = self._cuda.dense_scan_experiment(flat)
+        return {
+            "energy": float(raw["energy"]),
+            "gradient": np.asarray(raw["gradient"], dtype=np.float64).reshape(
+                self.config.param_shape
+            ),
+            "forward_states_ri": np.asarray(raw["forward_states_ri"], dtype=np.float64),
+            "backward_states_ri": np.asarray(raw["backward_states_ri"], dtype=np.float64),
+            "cpu_reference_ms": float(raw["cpu_reference_ms"]),
+            "gpu_scan_ms": float(raw["gpu_scan_ms"]),
+            "sequential_statevector_ms": float(raw["sequential_statevector_ms"]),
+        }

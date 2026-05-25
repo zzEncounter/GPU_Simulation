@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report-every", type=int, default=5)
     parser.add_argument(
         "--gradient-strategy",
-        choices=("auto", "checkpoint", "save_param_states"),
+        choices=("auto", "checkpoint", "save_param_states", "bruteforce_parallel_q6"),
         default="auto",
         help="Adjoint gradient memory strategy for the standalone backend.",
     )
@@ -124,6 +124,20 @@ def main() -> None:
     if resolution.note:
         print(f"  Strategy note: {resolution.note}")
     print(f"  Initial energy: {initial_energy:.10f}")
+    if resolution.resolved_strategy == "bruteforce_parallel_q6":
+        diag = backend.dense_scan_experiment(params)
+        print("  Dense q<=6 experiment snapshot:")
+        print(f"    CPU reference: {diag['cpu_reference_ms']:.3f} ms")
+        print(f"    GPU scan: {diag['gpu_scan_ms']:.3f} ms")
+        print(f"    Sequential statevector: {diag['sequential_statevector_ms']:.3f} ms")
+        print(
+            "    Forward states shape (num_states, state_size, 2): "
+            f"{diag['forward_states_ri'].shape}"
+        )
+        print(
+            "    Backward states shape (num_states, state_size, 2): "
+            f"{diag['backward_states_ri'].shape}"
+        )
     if telemetry_monitor is not None:
         print(
             "  GPU telemetry: "

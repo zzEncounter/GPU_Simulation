@@ -27,6 +27,7 @@
 
 - `save_param_states`
 - `checkpoint`
+- `bruteforce_parallel_q6`（实验模式，要求 `num_qubits <= 6`）
 - `auto`（仅在上面两者间自动选择）
 
 补充说明：
@@ -79,6 +80,7 @@ python -m venv .venv
 # 指定梯度策略
 .venv/bin/python run_standalone_backend.py --gradient-strategy save_param_states
 .venv/bin/python run_standalone_backend.py --gradient-strategy checkpoint
+.venv/bin/python run_standalone_backend.py --gradient-strategy bruteforce_parallel_q6
 
 # checkpoint 粒度
 .venv/bin/python run_standalone_backend.py --gradient-strategy checkpoint --checkpoint-interval 8
@@ -98,8 +100,10 @@ python -m venv .venv
 ```bash
 .venv/bin/python benchmarks/compare_pennylane_saveall_checkpoint.py \
   --cases 20x4 \
-  --standalone-modes save_param_states checkpoint auto
+  --standalone-modes save_param_states checkpoint auto bruteforce_parallel_q6
 ```
+
+`bruteforce_parallel_q6` 仅适用于 `--cases` 中 `qubits <= 6` 的条目。
 
 可选：
 

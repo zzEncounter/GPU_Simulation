@@ -24,6 +24,15 @@ void check_cuda(cudaError_t status, const char *context) {
     }
 }
 
+void check_cublas(cublasStatus_t status, const char *context) {
+    if (status == CUBLAS_STATUS_SUCCESS) {
+        return;
+    }
+    throw std::runtime_error(std::string(context) +
+                             ": cuBLAS call failed with status " +
+                             std::to_string(static_cast<int>(status)));
+}
+
 void maybe_synchronize_cuda(const char *context) {
 #ifdef STANDALONE_CUDA_EAGER_SYNC
     check_cuda(cudaDeviceSynchronize(), context);
@@ -240,6 +249,132 @@ __global__ void apply_ring_ising_hamiltonian_kernel(Complex *out,
     out[index] = value;
 }
 
+__global__ void fill_identity_matrices_kernel(Complex *mats, std::size_t batch,
+                                              std::size_t dim) {
+    const auto mat_elements = dim * dim;
+    const auto total = batch * mat_elements;
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= total) {
+        return;
+    }
+
+    const auto elem = index % mat_elements;
+    const auto row = elem % dim;
+    const auto col = elem / dim;
+    mats[index] = (row == col) ? Complex(1.0, 0.0) : Complex(0.0, 0.0);
+}
+
+__global__ void prepare_downsweep_buffers_kernel(Complex *mats,
+                                                 const int *left_indices,
+                                                 const int *right_indices,
+                                                 Complex *left_tmp,
+                                                 std::size_t num_pairs,
+                                                 std::size_t mat_elements) {
+    const auto total = num_pairs * mat_elements;
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= total) {
+        return;
+    }
+
+    const auto pair = index / mat_elements;
+    const auto elem = index % mat_elements;
+    const auto left_index = static_cast<std::size_t>(left_indices[pair]);
+    const auto right_index = static_cast<std::size_t>(right_indices[pair]);
+
+    const auto left_offset = left_index * mat_elements + elem;
+    const auto right_offset = right_index * mat_elements + elem;
+    left_tmp[index] = mats[left_offset];
+    mats[left_offset] = mats[right_offset];
+}
+
+__global__ void gather_vectors_kernel(const Complex *source_vectors,
+                                      const int *source_indices,
+                                      Complex *target_vectors,
+                                      std::size_t batch,
+                                      std::size_t vector_size) {
+    const auto total = batch * vector_size;
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= total) {
+        return;
+    }
+    const auto batch_index = index / vector_size;
+    const auto elem = index % vector_size;
+    const auto source_index =
+        static_cast<std::size_t>(source_indices[batch_index]);
+    target_vectors[index] = source_vectors[source_index * vector_size + elem];
+}
+
+__global__ void scatter_matrices_kernel(const Complex *source_mats,
+                                        const int *target_indices,
+                                        Complex *target_mats,
+                                        std::size_t batch,
+                                        std::size_t mat_elements) {
+    const auto total = batch * mat_elements;
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= total) {
+        return;
+    }
+    const auto batch_index = index / mat_elements;
+    const auto elem = index % mat_elements;
+    const auto target_index =
+        static_cast<std::size_t>(target_indices[batch_index]);
+    target_mats[target_index * mat_elements + elem] = source_mats[index];
+}
+
+__global__ void build_adjoint_batch_kernel(const Complex *source,
+                                           Complex *target, std::size_t batch,
+                                           std::size_t dim) {
+    const auto mat_elements = dim * dim;
+    const auto total = batch * mat_elements;
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= total) {
+        return;
+    }
+
+    const auto matrix_index = index / mat_elements;
+    const auto elem = index % mat_elements;
+    const auto row = elem % dim;
+    const auto col = elem / dim;
+
+    const auto matrix_offset = matrix_index * mat_elements;
+    const auto source_offset = matrix_offset + col + row * dim;
+    target[index] = thrust::conj(source[source_offset]);
+}
+
+__global__ void reduce_real_inner_products_kernel(const Complex *lhs,
+                                                  const Complex *rhs,
+                                                  double *out,
+                                                  std::size_t vector_size,
+                                                  double scale) {
+    __shared__ double partial[THREADS];
+    const auto batch_index = static_cast<std::size_t>(blockIdx.x);
+    double sum = 0.0;
+    for (std::size_t elem = threadIdx.x; elem < vector_size;
+         elem += blockDim.x) {
+        const auto offset = batch_index * vector_size + elem;
+        const Complex value = thrust::conj(lhs[offset]) * rhs[offset];
+        sum += value.real();
+    }
+    partial[threadIdx.x] = sum;
+    __syncthreads();
+
+    for (int stride = THREADS / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            partial[threadIdx.x] += partial[threadIdx.x + stride];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        out[batch_index] = scale * partial[0];
+    }
+}
+
 void launch_init_zero_state(Complex *state, std::size_t size) {
     const auto blocks = static_cast<int>((size + THREADS - 1) / THREADS);
     init_zero_state_kernel<<<blocks, THREADS>>>(state, size);
@@ -425,6 +560,69 @@ auto fused_ryrz_gradients(const Complex *lambda, const Complex *state,
                                      theta_rz},
         0.0, cuda::std::plus<double>());
     return {grad_theta, grad_phi};
+}
+
+void launch_fill_identity_matrices(Complex *mats, std::size_t batch,
+                                   std::size_t dim) {
+    const auto total = batch * dim * dim;
+    const auto blocks = static_cast<int>((total + THREADS - 1) / THREADS);
+    fill_identity_matrices_kernel<<<blocks, THREADS>>>(mats, batch, dim);
+    check_cuda(cudaGetLastError(), "fill_identity_matrices_kernel");
+    maybe_synchronize_cuda("fill_identity_matrices_kernel sync");
+}
+
+void launch_prepare_downsweep_buffers(Complex *mats,
+                                      const int *left_indices,
+                                      const int *right_indices,
+                                      Complex *left_tmp, std::size_t num_pairs,
+                                      std::size_t mat_elements) {
+    const auto total = num_pairs * mat_elements;
+    const auto blocks = static_cast<int>((total + THREADS - 1) / THREADS);
+    prepare_downsweep_buffers_kernel<<<blocks, THREADS>>>(
+        mats, left_indices, right_indices, left_tmp, num_pairs, mat_elements);
+    check_cuda(cudaGetLastError(), "prepare_downsweep_buffers_kernel");
+    maybe_synchronize_cuda("prepare_downsweep_buffers_kernel sync");
+}
+
+void launch_gather_vectors(const Complex *source_vectors,
+                           const int *source_indices, Complex *target_vectors,
+                           std::size_t batch, std::size_t vector_size) {
+    const auto total = batch * vector_size;
+    const auto blocks = static_cast<int>((total + THREADS - 1) / THREADS);
+    gather_vectors_kernel<<<blocks, THREADS>>>(source_vectors, source_indices,
+                                               target_vectors, batch,
+                                               vector_size);
+    check_cuda(cudaGetLastError(), "gather_vectors_kernel");
+    maybe_synchronize_cuda("gather_vectors_kernel sync");
+}
+
+void launch_scatter_matrices(const Complex *source_mats,
+                             const int *target_indices, Complex *target_mats,
+                             std::size_t batch, std::size_t mat_elements) {
+    const auto total = batch * mat_elements;
+    const auto blocks = static_cast<int>((total + THREADS - 1) / THREADS);
+    scatter_matrices_kernel<<<blocks, THREADS>>>(
+        source_mats, target_indices, target_mats, batch, mat_elements);
+    check_cuda(cudaGetLastError(), "scatter_matrices_kernel");
+    maybe_synchronize_cuda("scatter_matrices_kernel sync");
+}
+
+void launch_build_adjoint_batch(const Complex *source, Complex *target,
+                                std::size_t batch, std::size_t dim) {
+    const auto total = batch * dim * dim;
+    const auto blocks = static_cast<int>((total + THREADS - 1) / THREADS);
+    build_adjoint_batch_kernel<<<blocks, THREADS>>>(source, target, batch, dim);
+    check_cuda(cudaGetLastError(), "build_adjoint_batch_kernel");
+    maybe_synchronize_cuda("build_adjoint_batch_kernel sync");
+}
+
+void launch_reduce_real_inner_products(const Complex *lhs, const Complex *rhs,
+                                       double *out, std::size_t batch,
+                                       std::size_t vector_size, double scale) {
+    reduce_real_inner_products_kernel<<<static_cast<int>(batch), THREADS>>>(
+        lhs, rhs, out, vector_size, scale);
+    check_cuda(cudaGetLastError(), "reduce_real_inner_products_kernel");
+    maybe_synchronize_cuda("reduce_real_inner_products_kernel sync");
 }
 
 } // namespace detail

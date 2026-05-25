@@ -42,6 +42,11 @@ class RingIsingConfig:
     def statevector_nbytes(self) -> int:
         return (1 << self.num_qubits) * 16
 
+    @property
+    def dense_matrix_nbytes(self) -> int:
+        dim = 1 << self.num_qubits
+        return dim * dim * 16
+
     def default_checkpoint_interval_ops(self) -> int:
         if self.num_ops <= 1:
             return 0
@@ -62,8 +67,20 @@ class RingIsingConfig:
     ) -> int:
         if strategy == "save_param_states":
             return self.num_parametric_gates + 3
+        if strategy == "bruteforce_parallel_q6":
+            # matrix batches: gate mats + dgate mats + prefix/suffix scan work buffers.
+            padded = 1 << (self.num_ops - 1).bit_length() if self.num_ops > 0 else 1
+            return (
+                self.num_ops  # gate mats
+                + self.num_params  # derivative mats
+                + 2 * padded  # prefix/suffix scan buffers
+                + padded  # temporary scan buffers
+            )
         if strategy != "checkpoint":
-            raise ValueError("strategy must be 'save_param_states' or 'checkpoint'.")
+            raise ValueError(
+                "strategy must be 'save_param_states', 'checkpoint', "
+                "or 'bruteforce_parallel_q6'."
+            )
         checkpoint_interval_ops = self.resolve_checkpoint_interval_ops(
             strategy="checkpoint"
         ) if checkpoint_interval_ops is None else checkpoint_interval_ops
@@ -75,6 +92,29 @@ class RingIsingConfig:
     def estimated_gradient_workspace_gib_for(
         self, strategy: str, checkpoint_interval_ops: int | None = None
     ) -> float:
+        if strategy == "bruteforce_parallel_q6":
+            if self.num_ops <= 0:
+                return 0.0
+            padded = 1 << (self.num_ops - 1).bit_length()
+            matrix_count = (
+                self.num_ops  # gate mats
+                + self.num_params  # derivative mats
+                + 2 * padded  # prefix/suffix
+                + padded  # scan temp
+                + 2 * self.num_ops  # suffix helper buffers
+                + 1  # hamiltonian
+            )
+            vector_count = (
+                (self.num_ops + 1)  # forward states
+                + 4 * self.num_ops  # psi_before/after + lambda states
+                + 3 * self.num_params  # param gather + deriv
+                + 2  # psi0 + lambda_k
+            )
+            bytes_total = (
+                matrix_count * self.dense_matrix_nbytes
+                + vector_count * self.statevector_nbytes
+            )
+            return bytes_total / (1024**3)
         return (
             self.estimated_gradient_state_buffers_for(strategy, checkpoint_interval_ops)
             * self.statevector_nbytes
@@ -90,11 +130,14 @@ class RingIsingConfig:
             "auto",
             "save_param_states",
             "checkpoint",
+            "bruteforce_parallel_q6",
         }:
             raise ValueError(
                 "gradient_strategy must be 'auto', 'save_param_states', "
-                "or 'checkpoint'."
+                "'checkpoint', or 'bruteforce_parallel_q6'."
             )
+        if self.gradient_strategy == "bruteforce_parallel_q6" and self.num_qubits > 6:
+            raise ValueError("bruteforce_parallel_q6 requires num_qubits <= 6.")
         if self.checkpoint_interval_ops is not None and self.checkpoint_interval_ops < 1:
             raise ValueError("checkpoint_interval_ops must be positive when provided.")
         if not (0.0 < self.auto_memory_budget_fraction <= 1.0):

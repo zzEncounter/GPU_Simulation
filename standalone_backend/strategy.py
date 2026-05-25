@@ -57,7 +57,11 @@ def estimate_checkpoint_interval_for_budget(
 def resolve_strategy(config: RingIsingConfig) -> StrategyResolution:
     requested = config.gradient_strategy
     if requested != "auto":
-        checkpoint_interval_ops = config.resolve_checkpoint_interval_ops(strategy=requested)
+        checkpoint_interval_ops = (
+            0
+            if requested in {"save_param_states", "bruteforce_parallel_q6"}
+            else config.resolve_checkpoint_interval_ops(strategy=requested)
+        )
         return StrategyResolution(
             requested_strategy=requested,
             resolved_strategy=requested,
