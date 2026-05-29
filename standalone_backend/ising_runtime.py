@@ -77,6 +77,22 @@ class RingIsingAdjointBackend:
         energy, grad = self._cuda.energy_and_grad(flat)
         return float(energy), np.asarray(grad, dtype=np.float64).reshape(self.config.param_shape)
 
+    def energy_and_grad_with_timings(self, params: np.ndarray) -> dict[str, np.ndarray | float]:
+        """Evaluate energy/gradient and return backend phase timings."""
+
+        flat = self._normalize_params(params)
+        raw = self._cuda.energy_and_grad_with_timings(flat)
+        return {
+            "energy": float(raw["energy"]),
+            "gradient": np.asarray(raw["gradient"], dtype=np.float64).reshape(
+                self.config.param_shape
+            ),
+            "forward_ms": float(raw["forward_ms"]),
+            "back_ms": float(raw["back_ms"]),
+            "gradient_ms": float(raw["gradient_ms"]),
+            "total_ms": float(raw["total_ms"]),
+        }
+
     def dense_scan_experiment(self, params: np.ndarray) -> dict[str, np.ndarray | float]:
         """Run the q<=6 brute-force dense scan experiment and return diagnostics."""
 

@@ -36,6 +36,21 @@ auto make_state_ri_array(const std::vector<double> &flat_ri,
     return array;
 }
 
+auto make_energy_grad_dict(const standalone_backend::EnergyGradResult &result)
+    -> py::dict {
+    py::array_t<double> grad(result.gradient.size());
+    std::memcpy(grad.mutable_data(), result.gradient.data(),
+                result.gradient.size() * sizeof(double));
+    py::dict out;
+    out["energy"] = py::float_(result.energy);
+    out["gradient"] = std::move(grad);
+    out["forward_ms"] = py::float_(result.forward_ms);
+    out["back_ms"] = py::float_(result.back_ms);
+    out["gradient_ms"] = py::float_(result.gradient_ms);
+    out["total_ms"] = py::float_(result.total_ms);
+    return out;
+}
+
 } // namespace
 
 PYBIND11_MODULE(_cuda_backend, m) {
@@ -81,6 +96,24 @@ PYBIND11_MODULE(_cuda_backend, m) {
                 std::memcpy(grad.mutable_data(), result.gradient.data(),
                             result.gradient.size() * sizeof(double));
                 return py::make_tuple(result.energy, grad);
+            },
+            py::arg("params"))
+        .def(
+            "energy_and_grad_with_timings",
+            [](standalone_backend::RingIsingCudaBackend &self,
+               py::array_t<double, py::array::c_style | py::array::forcecast>
+                   params) {
+                const auto buffer = params.request();
+                const auto *params_ptr =
+                    static_cast<const double *>(buffer.ptr);
+                const auto params_size =
+                    static_cast<std::size_t>(buffer.size);
+                standalone_backend::EnergyGradResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = self.energy_and_grad(params_ptr, params_size);
+                }
+                return make_energy_grad_dict(result);
             },
             py::arg("params"))
         .def(
@@ -162,6 +195,34 @@ PYBIND11_MODULE(_cuda_backend, m) {
             std::memcpy(grad.mutable_data(), result.gradient.data(),
                         result.gradient.size() * sizeof(double));
             return py::make_tuple(result.energy, grad);
+        },
+        py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
+        py::arg("gradient_strategy") = "checkpoint",
+        py::arg("fuse_ring_cnot_layer") = true,
+        py::arg("checkpoint_interval_ops") = 0,
+        py::arg("params"));
+
+    m.def(
+        "energy_and_grad_with_timings",
+        [](std::size_t num_qubits, std::size_t num_layers, double field,
+           const std::string &gradient_strategy,
+           bool fuse_ring_cnot_layer,
+           std::size_t checkpoint_interval_ops,
+           py::array_t<double, py::array::c_style | py::array::forcecast>
+               params) {
+            validate_params_shape(num_qubits, num_layers, params);
+            const auto buffer = params.request();
+            const auto *params_ptr = static_cast<const double *>(buffer.ptr);
+            const auto params_size = static_cast<std::size_t>(buffer.size);
+            standalone_backend::EnergyGradResult result;
+            {
+                py::gil_scoped_release release;
+                result = standalone_backend::energy_and_grad(
+                    num_qubits, num_layers, field, gradient_strategy,
+                    fuse_ring_cnot_layer, params_ptr, params_size,
+                    checkpoint_interval_ops);
+            }
+            return make_energy_grad_dict(result);
         },
         py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
         py::arg("gradient_strategy") = "checkpoint",

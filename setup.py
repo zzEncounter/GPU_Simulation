@@ -16,10 +16,33 @@ ROOT = Path(__file__).parent.resolve()
 
 
 def find_cuda_home() -> Path:
+    # First check CUDA_HOME environment variable
+    cuda_home = os.environ.get("CUDA_HOME")
+    if cuda_home:
+        return Path(cuda_home)
+    
+    # Check if nvcc is in conda environment
     nvcc = shutil.which("nvcc")
-    if not nvcc:
-        raise RuntimeError("nvcc was not found on PATH.")
-    return Path(nvcc).resolve().parent.parent
+    if nvcc:
+        nvcc_path = Path(nvcc).resolve()
+        # Handle conda environments with targets/x86_64-linux structure
+        if "targets" in nvcc_path.parts:
+            idx = nvcc_path.parts.index("targets")
+            return Path(*nvcc_path.parts[:idx])
+        return nvcc_path.parent.parent
+    
+    # Check common conda CUDA locations
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        cuda_path = Path(conda_prefix) / "pkgs" / "cuda-nvcc-tools-13.2.78-he02047a_0"
+        if cuda_path.exists():
+            return cuda_path.parent.parent
+        # Try to find any cuda-nvcc package
+        for pkg in Path(conda_prefix / "pkgs").glob("cuda-nvcc-*"):
+            if (pkg / "bin" / "nvcc").exists():
+                return pkg.parent
+    
+    raise RuntimeError("nvcc was not found on PATH and CUDA_HOME is not set.")
 
 
 class BuildCudaExtension(build_ext):
@@ -83,6 +106,22 @@ class BuildCudaExtension(build_ext):
         )
 
 
+def get_cuda_lib_path(cuda_home: Path) -> Path:
+    """Get the CUDA library path, handling both standard and conda target structures."""
+    # Standard CUDA: cuda_home/lib64
+    lib64_path = cuda_home / "lib64"
+    if lib64_path.exists():
+        return lib64_path
+    
+    # Conda target structure: cuda_home/targets/x86_64-linux/lib
+    target_lib_path = cuda_home / "targets" / "x86_64-linux" / "lib"
+    if target_lib_path.exists():
+        return target_lib_path
+    
+    # Fallback to lib64
+    return lib64_path
+
+
 ext_modules = [
     Extension(
         "standalone_backend._cuda_backend",
@@ -99,8 +138,8 @@ ext_modules = [
         ],
         language="c++",
         libraries=["cudart", "cublas"],
-        library_dirs=[str(find_cuda_home() / "lib64")],
-        runtime_library_dirs=[str(find_cuda_home() / "lib64")],
+        library_dirs=[str(get_cuda_lib_path(find_cuda_home()))],
+        runtime_library_dirs=[str(get_cuda_lib_path(find_cuda_home()))],
         extra_compile_args={
             "cxx": ["-O3", "-std=c++17", "-fvisibility=hidden"],
             "nvcc": ["-O3", "--use_fast_math", "--extended-lambda", "-lineinfo"],

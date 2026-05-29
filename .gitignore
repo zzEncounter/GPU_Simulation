@@ -9,3 +9,4 @@ build/
 dist/
 old/
 *.so
+benchmarks/results/

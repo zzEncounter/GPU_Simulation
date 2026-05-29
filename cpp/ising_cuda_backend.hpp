@@ -10,6 +10,10 @@ namespace standalone_backend {
 struct EnergyGradResult {
     double energy;
     std::vector<double> gradient;
+    double forward_ms{0.0};
+    double back_ms{0.0};
+    double gradient_ms{0.0};
+    double total_ms{0.0};
 };
 
 struct DenseScanExperimentResult {

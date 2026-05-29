@@ -21,6 +21,11 @@ namespace {
 using detail::Complex;
 template <typename T> using DeviceBuffer = detail::DeviceBuffer<T>;
 
+auto elapsed_ms(std::chrono::steady_clock::time_point start,
+                std::chrono::steady_clock::time_point end) -> double {
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
 enum class OpKind { RY, RZ, CNOT, FusedRYRZ, RingCNOTLayer };
 enum class GradientStrategy {
     SaveParamStates,
@@ -402,6 +407,10 @@ struct DenseScanGpuRunResult {
     std::size_t num_ops{0};
     std::size_t state_size{0};
     double gpu_scan_ms{0.0};
+    double forward_ms{0.0};
+    double back_ms{0.0};
+    double gradient_ms{0.0};
+    double total_ms{0.0};
 };
 
 auto build_dense_gate_storage(std::size_t num_qubits, std::size_t num_layers,
@@ -844,10 +853,12 @@ auto run_forward_energy_only(RingIsingCudaBackend::Impl &impl,
 auto run_energy_and_grad_save_param_states(
     RingIsingCudaBackend::Impl &impl, const double *params,
     std::size_t num_params) -> EnergyGradResult {
+    const auto total_start = std::chrono::steady_clock::now();
     validate_num_params(impl.expected_params, num_params);
     const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
                                     impl.fuse_ring_cnot_layer);
 
+    const auto forward_start = std::chrono::steady_clock::now();
     detail::launch_init_zero_state(impl.current.get(), impl.state_size);
     for (std::size_t op_index = 0; op_index < ops.size(); op_index++) {
         const auto &op = ops[op_index];
@@ -867,14 +878,20 @@ auto run_energy_and_grad_save_param_states(
     const Complex energy_complex =
         detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
                                       impl.state_size);
+    detail::check_cuda(cudaDeviceSynchronize(),
+                       "run_energy_and_grad_save_param_states forward");
+    const auto forward_end = std::chrono::steady_clock::now();
 
     EnergyGradResult result;
     result.energy = energy_complex.real();
     result.gradient.assign(impl.expected_params, 0.0);
 
+    double gradient_ms = 0.0;
+    double back_ms = 0.0;
     for (std::size_t reverse_index = ops.size(); reverse_index-- > 0;) {
         const auto &op = ops[reverse_index];
         if (op.is_parametric) {
+            const auto gradient_start = std::chrono::steady_clock::now();
             const Complex *state_before =
                 state_slot(impl.save_param_states.get(), impl.state_size,
                            op.param_index0 / 2);
@@ -892,15 +909,27 @@ auto run_energy_and_grad_save_param_states(
                                                   impl.state_size);
                 result.gradient[op.param_index0] = 2.0 * grad_complex.real();
             }
+            detail::check_cuda(cudaDeviceSynchronize(),
+                               "run_energy_and_grad_save_param_states gradient");
+            gradient_ms += elapsed_ms(gradient_start,
+                                      std::chrono::steady_clock::now());
         }
         if (reverse_index != 0) {
+            const auto back_start = std::chrono::steady_clock::now();
             apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
                              impl.scratch.get(), impl.num_qubits);
+            detail::check_cuda(cudaDeviceSynchronize(),
+                               "run_energy_and_grad_save_param_states back");
+            back_ms += elapsed_ms(back_start, std::chrono::steady_clock::now());
         }
     }
 
     detail::check_cuda(cudaDeviceSynchronize(),
                        "run_energy_and_grad_save_param_states completion");
+    result.forward_ms = elapsed_ms(forward_start, forward_end);
+    result.back_ms = back_ms;
+    result.gradient_ms = gradient_ms;
+    result.total_ms = elapsed_ms(total_start, std::chrono::steady_clock::now());
     return result;
 }
 
@@ -908,6 +937,7 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
                                       const double *params,
                                       std::size_t num_params)
     -> EnergyGradResult {
+    const auto total_start = std::chrono::steady_clock::now();
     validate_num_params(impl.expected_params, num_params);
 
     if (impl.strategy == GradientStrategy::BruteForceParallelQ6) {
@@ -922,6 +952,7 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
         return run_energy_and_grad_save_param_states(impl, params, num_params);
     }
 
+    const auto forward_start = std::chrono::steady_clock::now();
     detail::launch_init_zero_state(impl.current.get(), impl.state_size);
     copy_device_buffer(state_slot(impl.checkpoints.get(), impl.state_size, 0),
                        impl.current.get(), impl.state_size);
@@ -944,17 +975,23 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
     const Complex energy_complex =
         detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
                                       impl.state_size);
+    detail::check_cuda(cudaDeviceSynchronize(),
+                       "run_energy_and_grad_checkpointed forward");
+    const auto forward_end = std::chrono::steady_clock::now();
 
     EnergyGradResult result;
     result.energy = energy_complex.real();
     result.gradient.assign(impl.expected_params, 0.0);
 
+    double gradient_ms = 0.0;
+    double back_ms = 0.0;
     for (std::size_t chunk_idx = impl.num_chunks; chunk_idx-- > 0;) {
         const auto chunk_start = chunk_idx * impl.checkpoint_interval_ops;
         const auto chunk_end =
             std::min(chunk_start + impl.checkpoint_interval_ops, num_ops);
         const auto local_count = chunk_end - chunk_start;
 
+        const auto back_recompute_start = std::chrono::steady_clock::now();
         copy_device_buffer(impl.current.get(),
                            state_slot(impl.checkpoints.get(), impl.state_size,
                                       chunk_idx),
@@ -970,11 +1007,16 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
                            local_idx + 1),
                 impl.current.get(), impl.state_size);
         }
+        detail::check_cuda(cudaDeviceSynchronize(),
+                           "run_energy_and_grad_checkpointed recompute");
+        back_ms += elapsed_ms(back_recompute_start,
+                              std::chrono::steady_clock::now());
 
         for (std::size_t op_idx = chunk_end; op_idx-- > chunk_start;) {
             const auto &op = ops[op_idx];
             const auto local_before = op_idx - chunk_start;
             if (op.is_parametric) {
+                const auto gradient_start = std::chrono::steady_clock::now();
                 const Complex *state_before =
                     state_slot(impl.local_states.get(), impl.state_size,
                                local_before);
@@ -993,16 +1035,28 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
                                                       impl.state_size);
                     result.gradient[op.param_index0] = 2.0 * grad_complex.real();
                 }
+                detail::check_cuda(cudaDeviceSynchronize(),
+                                   "run_energy_and_grad_checkpointed gradient");
+                gradient_ms += elapsed_ms(gradient_start,
+                                          std::chrono::steady_clock::now());
             }
             if (op_idx != 0) {
+                const auto back_start = std::chrono::steady_clock::now();
                 apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
                                  impl.scratch.get(), impl.num_qubits);
+                detail::check_cuda(cudaDeviceSynchronize(),
+                                   "run_energy_and_grad_checkpointed back");
+                back_ms += elapsed_ms(back_start, std::chrono::steady_clock::now());
             }
         }
     }
 
     detail::check_cuda(cudaDeviceSynchronize(),
                        "run_energy_and_grad_checkpointed completion");
+    result.forward_ms = elapsed_ms(forward_start, forward_end);
+    result.back_ms = back_ms;
+    result.gradient_ms = gradient_ms;
+    result.total_ms = elapsed_ms(total_start, std::chrono::steady_clock::now());
     return result;
 }
 
@@ -1118,6 +1172,7 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
                        "copy psi0");
 
     const auto gpu_start = std::chrono::steady_clock::now();
+    const auto forward_start = std::chrono::steady_clock::now();
 
     detail::launch_fill_identity_matrices(prefix_scan_dev.get(), padded, dim);
     detail::check_cuda(
@@ -1195,7 +1250,10 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     const Complex energy_complex =
         detail::complex_inner_product(forward_states_dev.get() + num_ops * dim,
                                       lambda_k_dev.get(), dim);
+    detail::check_cuda(cudaDeviceSynchronize(), "dense scan forward");
+    const auto forward_end = std::chrono::steady_clock::now();
 
+    const auto back_start = std::chrono::steady_clock::now();
     detail::launch_build_adjoint_batch(gate_mats_dev.get(), suffix_scan_dev.get(),
                                        num_ops, dim);
 
@@ -1247,7 +1305,10 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
                 to_int(num_ops, "num_ops")),
             "suffix * lambda_k");
     }
+    detail::check_cuda(cudaDeviceSynchronize(), "dense scan back");
+    const auto back_end = std::chrono::steady_clock::now();
 
+    const auto gradient_start = std::chrono::steady_clock::now();
     detail::launch_gather_vectors(lambda_by_op_dev.get(), param_gate_indices_dev.get(),
                                   lambda_for_params_dev.get(), num_params_local,
                                   dim);
@@ -1289,6 +1350,7 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
         cudaMemcpy(gradients.data(), gradients_dev.get(),
                    sizeof(double) * gradients.size(), cudaMemcpyDeviceToHost),
         "copy gradients to host");
+    const auto gradient_end = std::chrono::steady_clock::now();
 
     DenseScanGpuRunResult result;
     result.energy = energy_complex.real();
@@ -1296,6 +1358,10 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     result.num_ops = num_ops;
     result.state_size = dim;
     result.gpu_scan_ms = gpu_scan_ms;
+    result.forward_ms = elapsed_ms(forward_start, forward_end);
+    result.back_ms = elapsed_ms(back_start, back_end);
+    result.gradient_ms = elapsed_ms(gradient_start, gradient_end);
+    result.total_ms = elapsed_ms(gpu_start, gradient_end);
 
     if (copy_states_to_host) {
         result.forward_states.assign((num_ops + 1) * dim, Complex(0.0, 0.0));
@@ -1331,6 +1397,10 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     EnergyGradResult result;
     result.energy = gpu.energy;
     result.gradient = std::move(gpu.gradient);
+    result.forward_ms = gpu.forward_ms;
+    result.back_ms = gpu.back_ms;
+    result.gradient_ms = gpu.gradient_ms;
+    result.total_ms = gpu.total_ms;
     return result;
 }
 

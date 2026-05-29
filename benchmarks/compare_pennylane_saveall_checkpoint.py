@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import ctypes
+import ctypes.util
 import json
 import math
 import statistics
@@ -46,6 +48,8 @@ class ModeResult:
     grad_max_abs_diff: float | None
     grad_l2_diff: float | None
     forward_ms: float | None
+    back_ms: float | None
+    gradient_ms: float | None
     total_ms: float | None
     workspace_gib: float | None
     cpu_reference_ms: float | None
@@ -67,7 +71,9 @@ def _flatten_row(case: BenchmarkCase, result: ModeResult) -> dict[str, object]:
         "energy_abs_diff": result.energy_abs_diff,
         "grad_max_abs_diff": result.grad_max_abs_diff,
         "grad_l2_diff": result.grad_l2_diff,
-        "forward_ms": result.forward_ms,
+        "fwd_ms": result.forward_ms,
+        "back_ms": result.back_ms,
+        "gradient_ms": result.gradient_ms,
         "total_ms": result.total_ms,
         "workspace_gib": result.workspace_gib,
         "cpu_reference_ms": result.cpu_reference_ms,
@@ -90,15 +96,75 @@ def parse_case(text: str) -> BenchmarkCase:
         ) from exc
 
 
+_CUDA_RUNTIME: ctypes.CDLL | None | bool = None
+
+
+def _cuda_synchronize() -> None:
+    """Best-effort CUDA sync for timing; unavailable runtimes are ignored."""
+
+    global _CUDA_RUNTIME
+    if _CUDA_RUNTIME is False:
+        return
+    if _CUDA_RUNTIME is None:
+        candidates = [
+            ctypes.util.find_library("cudart"),
+            "libcudart.so",
+            "libcudart.so.12",
+            "libcudart.so.13",
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                _CUDA_RUNTIME = ctypes.CDLL(candidate)
+                break
+            except OSError:
+                continue
+        else:
+            _CUDA_RUNTIME = False
+            return
+    try:
+        _CUDA_RUNTIME.cudaDeviceSynchronize()
+    except AttributeError:
+        _CUDA_RUNTIME = False
+
+
 def _median_runtime_ms(fn, repeats: int, warmup: int) -> float:
     for _ in range(warmup):
         fn()
+        _cuda_synchronize()
     samples: list[float] = []
     for _ in range(repeats):
+        _cuda_synchronize()
         start = time.perf_counter()
         fn()
+        _cuda_synchronize()
         samples.append((time.perf_counter() - start) * 1000.0)
     return statistics.median(samples)
+
+
+def _derive_timing_breakdown(
+    forward_ms: float, gradient_ms: float
+) -> tuple[float, float]:
+    back_ms = max(0.0, gradient_ms - forward_ms)
+    total_ms = forward_ms + back_ms
+    return back_ms, total_ms
+
+
+def _median_timing_fields(fn, repeats: int, warmup: int) -> dict[str, float]:
+    for _ in range(warmup):
+        fn()
+    samples: dict[str, list[float]] = {
+        "forward_ms": [],
+        "back_ms": [],
+        "gradient_ms": [],
+        "total_ms": [],
+    }
+    for _ in range(repeats):
+        raw = fn()
+        for key in samples:
+            samples[key].append(float(raw[key]))
+    return {key: statistics.median(values) for key, values in samples.items()}
 
 
 def _peak_memory_from_summary(summary: GpuTelemetrySummary) -> tuple[int | None, int | None]:
@@ -184,21 +250,16 @@ def _benchmark_pennylane(
 
     try:
         forward_ms = _median_runtime_ms(lambda: float(workflow.energy_qnode(params_pl)), repeats, warmup)
-        total_ms = _median_runtime_ms(
-            lambda: (
-                float(workflow.energy_qnode(params_pl)),
-                np.asarray(workflow.gradient_fn(params_pl), dtype=np.float64),
-            ),
+        gradient_ms = _median_runtime_ms(
+            lambda: np.asarray(workflow.gradient_fn(params_pl), dtype=np.float64),
             repeats,
             warmup,
         )
+        back_ms, total_ms = _derive_timing_breakdown(forward_ms, gradient_ms)
         telemetry_summary = _capture_telemetry(
-            lambda: (
-                float(workflow.energy_qnode(params_pl)),
-                np.asarray(workflow.gradient_fn(params_pl), dtype=np.float64),
-            ),
+            lambda: np.asarray(workflow.gradient_fn(params_pl), dtype=np.float64),
             target_ms=telemetry_target_ms,
-            measured_ms=total_ms,
+            measured_ms=gradient_ms,
             interval_s=telemetry_interval_s,
         )
         peak_fb, peak_proc = _peak_memory_from_summary(telemetry_summary)
@@ -210,6 +271,8 @@ def _benchmark_pennylane(
             grad_max_abs_diff=0.0,
             grad_l2_diff=0.0,
             forward_ms=forward_ms,
+            back_ms=back_ms,
+            gradient_ms=gradient_ms,
             total_ms=total_ms,
             workspace_gib=None,
             cpu_reference_ms=None,
@@ -229,6 +292,8 @@ def _benchmark_pennylane(
             grad_max_abs_diff=None,
             grad_l2_diff=None,
             forward_ms=None,
+            back_ms=None,
+            gradient_ms=None,
             total_ms=None,
             workspace_gib=None,
             cpu_reference_ms=None,
@@ -245,7 +310,7 @@ def _benchmark_standalone(
     mode: str,
     case: BenchmarkCase,
     params_np: np.ndarray,
-    ref: ReferenceData,
+    ref: ReferenceData | None,
     field: float,
     repeats: int,
     warmup: int,
@@ -269,22 +334,31 @@ def _benchmark_standalone(
             if mode == "bruteforce_parallel_q6"
             else None
         )
-        if dense_diag is not None:
-            energy = float(dense_diag["energy"])
-            grad = np.asarray(dense_diag["gradient"], dtype=np.float64)
+        timed = backend.energy_and_grad_with_timings(params_np)
+        energy = float(timed["energy"])
+        grad = np.asarray(timed["gradient"], dtype=np.float64)
+        if ref is not None:
+            grad_diff = ref.grad - grad
+            energy_abs_diff = abs(ref.energy - energy)
+            grad_max_abs_diff = float(np.max(np.abs(grad_diff)))
+            grad_l2_diff = float(np.linalg.norm(grad_diff))
         else:
-            energy, grad = backend.energy_and_grad(params_np)
-        grad_diff = ref.grad - grad
+            energy_abs_diff = None
+            grad_max_abs_diff = None
+            grad_l2_diff = None
 
-        forward_ms = _median_runtime_ms(lambda: backend.energy(params_np), repeats, warmup)
-        total_ms = _median_runtime_ms(
-            lambda: backend.energy_and_grad(params_np), repeats, warmup
+        timings = _median_timing_fields(
+            lambda: backend.energy_and_grad_with_timings(params_np), repeats, warmup
         )
+        forward_ms = timings["forward_ms"]
+        back_ms = timings["back_ms"]
+        gradient_ms = timings["gradient_ms"]
+        total_ms = timings["total_ms"]
         heavy_call = lambda: backend.energy_and_grad(params_np)
         telemetry_summary = _capture_telemetry(
             heavy_call,
             target_ms=telemetry_target_ms,
-            measured_ms=total_ms,
+            measured_ms=gradient_ms,
             interval_s=telemetry_interval_s,
         )
         peak_fb, peak_proc = _peak_memory_from_summary(telemetry_summary)
@@ -296,10 +370,12 @@ def _benchmark_standalone(
                 if resolution.requested_strategy == resolution.resolved_strategy
                 else f"resolved={resolution.resolved_strategy}"
             ),
-            energy_abs_diff=abs(ref.energy - energy),
-            grad_max_abs_diff=float(np.max(np.abs(grad_diff))),
-            grad_l2_diff=float(np.linalg.norm(grad_diff)),
+            energy_abs_diff=energy_abs_diff,
+            grad_max_abs_diff=grad_max_abs_diff,
+            grad_l2_diff=grad_l2_diff,
             forward_ms=forward_ms,
+            back_ms=back_ms,
+            gradient_ms=gradient_ms,
             total_ms=total_ms,
             workspace_gib=resolution.estimated_workspace_gib,
             cpu_reference_ms=(
@@ -327,6 +403,8 @@ def _benchmark_standalone(
             grad_max_abs_diff=None,
             grad_l2_diff=None,
             forward_ms=None,
+            back_ms=None,
+            gradient_ms=None,
             total_ms=None,
             workspace_gib=None,
             cpu_reference_ms=None,
@@ -395,6 +473,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable gate fusion optimizations for A/B comparisons.",
     )
+    parser.add_argument(
+        "--skip-pennylane",
+        action="store_true",
+        help="Skip PennyLane baseline and only run standalone modes.",
+    )
     return parser.parse_args()
 
 
@@ -403,7 +486,16 @@ def _worker_run(args: argparse.Namespace) -> ModeResult:
         raise ValueError("worker-mode and worker-case must be provided in worker mode.")
 
     case = args.worker_case
-    params_np, ref = _build_reference(case, args.field, args.seed, args.init_scale)
+    params_np = make_initial_params(
+        num_qubits=case.num_qubits,
+        layers=case.layers,
+        seed=args.seed,
+        init_scale=args.init_scale,
+    )
+    params_np = np.asarray(params_np, dtype=np.float64)
+    ref = None
+    if not args.skip_pennylane or args.worker_mode == "pennylane":
+        _, ref = _build_reference(case, args.field, args.seed, args.init_scale)
     if args.worker_mode == "pennylane":
         return _benchmark_pennylane(
             case,
@@ -457,6 +549,8 @@ def _run_worker_subprocess(
         "--telemetry-target-ms",
         str(args.telemetry_target_ms),
     ]
+    if args.skip_pennylane:
+        command.append("--skip-pennylane")
     if args.disable_gate_fusion:
         command.append("--disable-gate-fusion")
     completed = subprocess.run(
@@ -483,7 +577,8 @@ def _fmt_int(value: int | None) -> str:
 def _print_case(case: BenchmarkCase, results: list[ModeResult]) -> None:
     print(f"{case.num_qubits} qubits x {case.layers} layers")
     header = (
-        "  mode         ok   fwd_ms    total_ms  energy_diff   grad_max_diff "
+        "  mode         ok   fwd_ms   back_ms  gradient_ms   total_ms  "
+        "energy_diff   grad_max_diff "
         "workspace_GiB  cpu_ref_ms  gpu_scan_ms  seq_sv_ms  peak_fb_MiB "
         "peak_proc_MiB  samples  fusion  note"
     )
@@ -493,6 +588,8 @@ def _print_case(case: BenchmarkCase, results: list[ModeResult]) -> None:
             f"  {result.mode:<12} "
             f"{('yes' if result.ok else 'no'):<4} "
             f"{_fmt_float(result.forward_ms):>8} "
+            f"{_fmt_float(result.back_ms):>8} "
+            f"{_fmt_float(result.gradient_ms):>12} "
             f"{_fmt_float(result.total_ms):>10} "
             f"{_fmt_float(result.energy_abs_diff, 3):>12} "
             f"{_fmt_float(result.grad_max_abs_diff, 3):>15} "
@@ -520,7 +617,9 @@ def _write_csv(rows: list[dict[str, object]], path: Path) -> None:
         "energy_abs_diff",
         "grad_max_abs_diff",
         "grad_l2_diff",
-        "forward_ms",
+        "fwd_ms",
+        "back_ms",
+        "gradient_ms",
         "total_ms",
         "workspace_gib",
         "cpu_reference_ms",
@@ -540,8 +639,8 @@ def _write_csv(rows: list[dict[str, object]], path: Path) -> None:
 def _write_markdown(rows: list[dict[str, object]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "| qubits | layers | mode | ok | fwd_ms | total_ms | energy_diff | grad_max_diff | workspace_gib | cpu_ref_ms | gpu_scan_ms | seq_sv_ms | peak_fb_mib | peak_proc_mib | samples | fusion | note |",
-        "|---:|---:|---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---|",
+        "| qubits | layers | mode | ok | fwd_ms | back_ms | gradient_ms | total_ms | energy_diff | grad_max_diff | workspace_gib | cpu_ref_ms | gpu_scan_ms | seq_sv_ms | peak_fb_mib | peak_proc_mib | samples | fusion | note |",
+        "|---:|---:|---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---|",
     ]
     for row in rows:
         lines.append(
@@ -552,7 +651,9 @@ def _write_markdown(rows: list[dict[str, object]], path: Path) -> None:
                     str(row["layers"]),
                     str(row["mode"]),
                     "yes" if row["ok"] else "no",
-                    _fmt_float(row["forward_ms"]),
+                    _fmt_float(row["fwd_ms"]),
+                    _fmt_float(row["back_ms"]),
+                    _fmt_float(row["gradient_ms"]),
                     _fmt_float(row["total_ms"]),
                     _fmt_float(row["energy_abs_diff"], 3),
                     _fmt_float(row["grad_max_abs_diff"], 3),
@@ -591,10 +692,11 @@ def main() -> None:
 
     rows: list[dict[str, object]] = []
     for case in args.cases:
-        results = [_run_worker_subprocess("pennylane", case, args)]
+        results: list[ModeResult] = []
+        if not args.skip_pennylane:
+            results.append(_run_worker_subprocess("pennylane", case, args))
         results.extend(
-            _run_worker_subprocess(mode, case, args)
-            for mode in args.standalone_modes
+            _run_worker_subprocess(mode, case, args) for mode in args.standalone_modes
         )
         rows.extend(_flatten_row(case, result) for result in results)
         _print_case(case, results)
