@@ -1,68 +1,25 @@
-"""Shared utilities for the adjoint-diff baseline."""
+"""GPU telemetry sampling and summary helpers."""
 
 from __future__ import annotations
 
-import csv
 import os
 import shutil
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
-from typing import Any
 
-import pennylane as qml
-
-
-DEVICE_CANDIDATES = {
-    "auto": ("lightning.gpu", "lightning.qubit", "default.qubit"),
-    "gpu": ("lightning.gpu",),
-    "cpu": ("lightning.qubit", "default.qubit"),
-    "default": ("default.qubit",),
-}
-
-
-@dataclass(frozen=True)
-class DeviceSelection:
-    """Selected PennyLane device plus any fallback notes."""
-
-    requested_mode: str
-    device_name: str
-    device: Any
-    selection_errors: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class GpuSnapshot:
-    """One GPU-level snapshot row from nvidia-smi."""
-
-    index: str
-    name: str
-    memory_used_mib: int | None
-    memory_total_mib: int | None
-    utilization_gpu_pct: int | None
-    temperature_c: int | None
-
-
-@dataclass(frozen=True)
-class ComputeProcessSnapshot:
-    """One compute-process row from nvidia-smi."""
-
-    pid: int
-    process_name: str
-    used_gpu_memory_mib: int | None
-
-
-@dataclass(frozen=True)
-class ResourceSnapshot:
-    """Combined CPU and GPU resource snapshot for the current process."""
-
-    label: str
-    process_rss_mib: float | None
-    gpus: tuple[GpuSnapshot, ...]
-    active_compute_processes: tuple[ComputeProcessSnapshot, ...]
-    note: str | None = None
+from ._nvidia_smi import (
+    is_missing_value,
+    max_or_none,
+    mean_or_none,
+    parse_float_or_none,
+    parse_int_or_none,
+    parse_nvidia_csv,
+    query_gpu_telemetry_rows,
+    query_gpm_rows,
+    query_process_gpu_memory_rows,
+)
 
 
 @dataclass(frozen=True)
@@ -322,230 +279,12 @@ class GpuTelemetryMonitor:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            row = next(iter(_parse_nvidia_csv(stripped, gpm_fields)), None)
+            row = next(iter(parse_nvidia_csv(stripped, gpm_fields)), None)
             if row is None:
                 continue
             gpu_index = row["gpu"].strip()
             with self._lock:
                 self._latest_gpm_rows[gpu_index] = row
-
-
-def _is_missing_value(value: str) -> bool:
-    normalized = value.strip()
-    return normalized in {"", "-", "N/A", "[Not Supported]", "Not Supported"}
-
-
-def create_device(requested_mode: str, wires: int) -> DeviceSelection:
-    """Create the requested PennyLane device with optional fallback."""
-    if requested_mode not in DEVICE_CANDIDATES:
-        choices = ", ".join(sorted(DEVICE_CANDIDATES))
-        raise ValueError(f"Unknown device mode {requested_mode!r}. Expected one of: {choices}")
-
-    selection_errors: list[str] = []
-    for device_name in DEVICE_CANDIDATES[requested_mode]:
-        try:
-            return DeviceSelection(
-                requested_mode=requested_mode,
-                device_name=device_name,
-                device=qml.device(device_name, wires=wires),
-                selection_errors=tuple(selection_errors),
-            )
-        except Exception as exc:
-            selection_errors.append(f"{device_name}: {type(exc).__name__}: {exc}")
-
-    error_text = "\n".join(selection_errors) or "No device candidates were configured."
-    raise RuntimeError(
-        f"Unable to initialize a PennyLane device for mode {requested_mode!r}.\n{error_text}"
-    )
-
-
-def package_version(package_name: str) -> str:
-    """Return an installed package version or a readable fallback."""
-    try:
-        return version(package_name)
-    except PackageNotFoundError:
-        return "not installed"
-
-
-def format_gate_types(gate_types: dict[str, int]) -> str:
-    """Format gate counts into a compact human-readable string."""
-    return ", ".join(
-        f"{gate_name}:{count}" for gate_name, count in sorted(gate_types.items())
-    )
-
-
-def _parse_nvidia_csv(output: str, fields: list[str]) -> list[dict[str, str]]:
-    """Parse a CSV table returned by nvidia-smi."""
-    if not output.strip():
-        return []
-
-    rows: list[dict[str, str]] = []
-    for row in csv.reader(output.splitlines()):
-        values = [value.strip() for value in row]
-        rows.append(dict(zip(fields, values)))
-    return rows
-
-
-def _parse_int_or_none(value: str) -> int | None:
-    """Convert a string to int when possible."""
-    if _is_missing_value(value):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_float_or_none(value: str) -> float | None:
-    """Convert a string to float when possible."""
-    if _is_missing_value(value):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _mean_or_none(values: list[float | int | None]) -> float | None:
-    filtered = [float(value) for value in values if value is not None]
-    if not filtered:
-        return None
-    return sum(filtered) / len(filtered)
-
-
-def _max_or_none(values: list[float | int | None]) -> float | int | None:
-    filtered = [value for value in values if value is not None]
-    if not filtered:
-        return None
-    return max(filtered)
-
-
-def process_rss_mib() -> float | None:
-    """Read the resident set size for the current process on Linux."""
-    try:
-        with open("/proc/self/status", "r", encoding="utf-8") as status_file:
-            for line in status_file:
-                if line.startswith("VmRSS:"):
-                    rss_kib = int(line.split()[1])
-                    return rss_kib / 1024
-    except (OSError, ValueError):
-        return None
-    return None
-
-
-def _run_nvidia_smi_command(command: list[str]) -> tuple[str | None, str | None]:
-    """Run one nvidia-smi command and return stdout or an error note."""
-    try:
-        result = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as exc:
-        return None, str(exc)
-    return result.stdout, None
-
-
-def _query_gpu_telemetry_rows() -> tuple[list[dict[str, str]], str | None]:
-    """Return one-shot GPU telemetry rows from nvidia-smi."""
-    if shutil.which("nvidia-smi") is None:
-        return [], "nvidia-smi not found on PATH"
-
-    gpu_fields = [
-        "index",
-        "uuid",
-        "name",
-        "memory.used",
-        "memory.total",
-        "utilization.gpu",
-        "utilization.memory",
-        "utilization.encoder",
-        "utilization.decoder",
-        "utilization.jpeg",
-        "utilization.ofa",
-        "power.draw",
-        "temperature.gpu",
-        "clocks.sm",
-        "clocks.mem",
-        "pstate",
-    ]
-    output, note = _run_nvidia_smi_command(
-        [
-            "nvidia-smi",
-            f"--query-gpu={','.join(gpu_fields)}",
-            "--format=csv,noheader,nounits",
-        ]
-    )
-    if output is None:
-        return [], note
-    return _parse_nvidia_csv(output, gpu_fields), None
-
-
-def _query_process_gpu_memory_rows() -> tuple[list[dict[str, str]], str | None]:
-    """Return active compute-process GPU memory rows from nvidia-smi."""
-    if shutil.which("nvidia-smi") is None:
-        return [], "nvidia-smi not found on PATH"
-
-    app_fields = ["gpu_uuid", "pid", "process_name", "used_gpu_memory"]
-    output, note = _run_nvidia_smi_command(
-        [
-            "nvidia-smi",
-            f"--query-compute-apps={','.join(app_fields)}",
-            "--format=csv,noheader,nounits",
-        ]
-    )
-    if output is None:
-        return [], note
-    return _parse_nvidia_csv(output, app_fields), None
-
-
-def _query_gpm_rows() -> tuple[list[dict[str, str]], str | None]:
-    """Return one-shot GPM rows from nvidia-smi dmon when available."""
-    if shutil.which("nvidia-smi") is None:
-        return [], "nvidia-smi not found on PATH"
-
-    gpm_fields = [
-        "gpu",
-        "pwr",
-        "gtemp",
-        "mtemp",
-        "sm",
-        "mem",
-        "enc",
-        "dec",
-        "jpg",
-        "ofa",
-        "mclk",
-        "pclk",
-        "smutil",
-        "smocc",
-        "mmaact",
-        "dram",
-        "fp64",
-        "fp32",
-        "fp16",
-        "nvenc0",
-    ]
-    output, note = _run_nvidia_smi_command(
-        [
-            "nvidia-smi",
-            "dmon",
-            "--gpm-options",
-            "d",
-            "--gpm-metrics",
-            "2,3,5,10,11,12,13,166",
-            "-d",
-            "1",
-            "-c",
-            "1",
-            "--format",
-            "csv,nounit,noheader",
-        ]
-    )
-    if output is None:
-        return [], note
-    return _parse_nvidia_csv(output, gpm_fields), None
 
 
 def capture_gpu_telemetry_snapshot(
@@ -556,10 +295,10 @@ def capture_gpu_telemetry_snapshot(
     current_pid = os.getpid() if current_pid is None else current_pid
     timestamp_s = time.perf_counter()
 
-    gpu_rows, gpu_note = _query_gpu_telemetry_rows()
-    process_rows, process_note = _query_process_gpu_memory_rows()
+    gpu_rows, gpu_note = query_gpu_telemetry_rows()
+    process_rows, process_note = query_process_gpu_memory_rows()
     if gpm_rows_by_index is None:
-        gpm_rows, gpm_note = _query_gpm_rows()
+        gpm_rows, gpm_note = query_gpm_rows()
         gpm_rows_by_index = {row["gpu"].strip(): row for row in gpm_rows}
     else:
         gpm_note = None
@@ -569,10 +308,10 @@ def capture_gpu_telemetry_snapshot(
 
     process_mem_by_uuid: dict[str, int] = {}
     for row in process_rows:
-        if _parse_int_or_none(row["pid"]) != current_pid:
+        if parse_int_or_none(row["pid"]) != current_pid:
             continue
         uuid = row.get("gpu_uuid", "").strip()
-        used_gpu_memory = _parse_int_or_none(row["used_gpu_memory"])
+        used_gpu_memory = parse_int_or_none(row["used_gpu_memory"])
         if not uuid or used_gpu_memory is None:
             continue
         process_mem_by_uuid[uuid] = process_mem_by_uuid.get(uuid, 0) + used_gpu_memory
@@ -588,27 +327,27 @@ def capture_gpu_telemetry_snapshot(
                 index=gpu_index,
                 uuid=gpu_uuid,
                 name=row["name"],
-                memory_used_mib=_parse_int_or_none(row["memory.used"]),
-                memory_total_mib=_parse_int_or_none(row["memory.total"]),
+                memory_used_mib=parse_int_or_none(row["memory.used"]),
+                memory_total_mib=parse_int_or_none(row["memory.total"]),
                 process_used_gpu_memory_mib=process_mem_by_uuid.get(gpu_uuid or ""),
-                utilization_gpu_pct=_parse_float_or_none(row["utilization.gpu"]),
-                utilization_memory_pct=_parse_float_or_none(row["utilization.memory"]),
-                utilization_encoder_pct=_parse_float_or_none(row["utilization.encoder"]),
-                utilization_decoder_pct=_parse_float_or_none(row["utilization.decoder"]),
-                utilization_jpeg_pct=_parse_float_or_none(row["utilization.jpeg"]),
-                utilization_ofa_pct=_parse_float_or_none(row["utilization.ofa"]),
-                power_draw_w=_parse_float_or_none(row["power.draw"]),
-                temperature_c=_parse_float_or_none(row["temperature.gpu"]),
-                clocks_sm_mhz=_parse_float_or_none(row["clocks.sm"]),
-                clocks_mem_mhz=_parse_float_or_none(row["clocks.mem"]),
-                pstate=None if _is_missing_value(row["pstate"]) else row["pstate"].strip(),
-                sm_activity_pct=_parse_float_or_none(gpm_row.get("smutil", "")),
-                sm_occupancy_pct=_parse_float_or_none(gpm_row.get("smocc", "")),
-                tensor_activity_pct=_parse_float_or_none(gpm_row.get("mmaact", "")),
-                dram_activity_pct=_parse_float_or_none(gpm_row.get("dram", "")),
-                fp64_activity_pct=_parse_float_or_none(gpm_row.get("fp64", "")),
-                fp32_activity_pct=_parse_float_or_none(gpm_row.get("fp32", "")),
-                fp16_activity_pct=_parse_float_or_none(gpm_row.get("fp16", "")),
+                utilization_gpu_pct=parse_float_or_none(row["utilization.gpu"]),
+                utilization_memory_pct=parse_float_or_none(row["utilization.memory"]),
+                utilization_encoder_pct=parse_float_or_none(row["utilization.encoder"]),
+                utilization_decoder_pct=parse_float_or_none(row["utilization.decoder"]),
+                utilization_jpeg_pct=parse_float_or_none(row["utilization.jpeg"]),
+                utilization_ofa_pct=parse_float_or_none(row["utilization.ofa"]),
+                power_draw_w=parse_float_or_none(row["power.draw"]),
+                temperature_c=parse_float_or_none(row["temperature.gpu"]),
+                clocks_sm_mhz=parse_float_or_none(row["clocks.sm"]),
+                clocks_mem_mhz=parse_float_or_none(row["clocks.mem"]),
+                pstate=None if is_missing_value(row["pstate"]) else row["pstate"].strip(),
+                sm_activity_pct=parse_float_or_none(gpm_row.get("smutil", "")),
+                sm_occupancy_pct=parse_float_or_none(gpm_row.get("smocc", "")),
+                tensor_activity_pct=parse_float_or_none(gpm_row.get("mmaact", "")),
+                dram_activity_pct=parse_float_or_none(gpm_row.get("dram", "")),
+                fp64_activity_pct=parse_float_or_none(gpm_row.get("fp64", "")),
+                fp32_activity_pct=parse_float_or_none(gpm_row.get("fp32", "")),
+                fp16_activity_pct=parse_float_or_none(gpm_row.get("fp16", "")),
             )
         )
 
@@ -616,81 +355,6 @@ def capture_gpu_telemetry_snapshot(
         timestamp_s=timestamp_s,
         gpus=tuple(samples),
         note=note_text,
-    )
-
-
-def query_nvidia_smi() -> tuple[list[dict[str, str]], list[dict[str, str]], str | None]:
-    """Return GPU and compute-process snapshots from nvidia-smi."""
-    if shutil.which("nvidia-smi") is None:
-        return [], [], "nvidia-smi not found on PATH"
-
-    gpu_fields = [
-        "index",
-        "name",
-        "memory.used",
-        "memory.total",
-        "utilization.gpu",
-        "temperature.gpu",
-    ]
-    app_fields = ["pid", "process_name", "used_gpu_memory"]
-
-    gpu_output, gpu_note = _run_nvidia_smi_command(
-        [
-            "nvidia-smi",
-            f"--query-gpu={','.join(gpu_fields)}",
-            "--format=csv,noheader,nounits",
-        ]
-    )
-    app_output, app_note = _run_nvidia_smi_command(
-        [
-            "nvidia-smi",
-            f"--query-compute-apps={','.join(app_fields)}",
-            "--format=csv,noheader,nounits",
-        ]
-    )
-    if gpu_output is None or app_output is None:
-        note = "; ".join(note for note in (gpu_note, app_note) if note)
-        return [], [], note
-
-    return (
-        _parse_nvidia_csv(gpu_output, gpu_fields),
-        _parse_nvidia_csv(app_output, app_fields),
-        None,
-    )
-
-
-def capture_resource_snapshot(label: str) -> ResourceSnapshot:
-    """Capture CPU RSS and the current process's visible GPU usage."""
-    gpu_rows, app_rows, note = query_nvidia_smi()
-    current_pid = os.getpid()
-
-    gpus = tuple(
-        GpuSnapshot(
-            index=row["index"],
-            name=row["name"],
-            memory_used_mib=_parse_int_or_none(row["memory.used"]),
-            memory_total_mib=_parse_int_or_none(row["memory.total"]),
-            utilization_gpu_pct=_parse_int_or_none(row["utilization.gpu"]),
-            temperature_c=_parse_int_or_none(row["temperature.gpu"]),
-        )
-        for row in gpu_rows
-    )
-    active_compute_processes = tuple(
-        ComputeProcessSnapshot(
-            pid=int(row["pid"]),
-            process_name=row["process_name"],
-            used_gpu_memory_mib=_parse_int_or_none(row["used_gpu_memory"]),
-        )
-        for row in app_rows
-        if _parse_int_or_none(row["pid"]) == current_pid
-    )
-
-    return ResourceSnapshot(
-        label=label,
-        process_rss_mib=process_rss_mib(),
-        gpus=gpus,
-        active_compute_processes=active_compute_processes,
-        note=note,
     )
 
 
@@ -704,59 +368,59 @@ def _summarize_gpu_telemetry_samples(
         uuid=sample0.uuid,
         sample_count=len(samples),
         fb_memory_total_mib=sample0.memory_total_mib,
-        avg_utilization_gpu_pct=_mean_or_none([sample.utilization_gpu_pct for sample in samples]),
-        peak_utilization_gpu_pct=_max_or_none([sample.utilization_gpu_pct for sample in samples]),
-        avg_utilization_memory_pct=_mean_or_none(
+        avg_utilization_gpu_pct=mean_or_none([sample.utilization_gpu_pct for sample in samples]),
+        peak_utilization_gpu_pct=max_or_none([sample.utilization_gpu_pct for sample in samples]),
+        avg_utilization_memory_pct=mean_or_none(
             [sample.utilization_memory_pct for sample in samples]
         ),
-        peak_utilization_memory_pct=_max_or_none(
+        peak_utilization_memory_pct=max_or_none(
             [sample.utilization_memory_pct for sample in samples]
         ),
-        avg_utilization_encoder_pct=_mean_or_none(
+        avg_utilization_encoder_pct=mean_or_none(
             [sample.utilization_encoder_pct for sample in samples]
         ),
-        peak_utilization_encoder_pct=_max_or_none(
+        peak_utilization_encoder_pct=max_or_none(
             [sample.utilization_encoder_pct for sample in samples]
         ),
-        avg_utilization_decoder_pct=_mean_or_none(
+        avg_utilization_decoder_pct=mean_or_none(
             [sample.utilization_decoder_pct for sample in samples]
         ),
-        peak_utilization_decoder_pct=_max_or_none(
+        peak_utilization_decoder_pct=max_or_none(
             [sample.utilization_decoder_pct for sample in samples]
         ),
-        avg_utilization_jpeg_pct=_mean_or_none(
+        avg_utilization_jpeg_pct=mean_or_none(
             [sample.utilization_jpeg_pct for sample in samples]
         ),
-        peak_utilization_jpeg_pct=_max_or_none(
+        peak_utilization_jpeg_pct=max_or_none(
             [sample.utilization_jpeg_pct for sample in samples]
         ),
-        avg_utilization_ofa_pct=_mean_or_none(
+        avg_utilization_ofa_pct=mean_or_none(
             [sample.utilization_ofa_pct for sample in samples]
         ),
-        peak_utilization_ofa_pct=_max_or_none([sample.utilization_ofa_pct for sample in samples]),
-        avg_power_draw_w=_mean_or_none([sample.power_draw_w for sample in samples]),
-        peak_power_draw_w=_max_or_none([sample.power_draw_w for sample in samples]),
-        peak_temperature_c=_max_or_none([sample.temperature_c for sample in samples]),
-        peak_fb_memory_used_mib=_max_or_none([sample.memory_used_mib for sample in samples]),
-        peak_process_used_gpu_memory_mib=_max_or_none(
+        peak_utilization_ofa_pct=max_or_none([sample.utilization_ofa_pct for sample in samples]),
+        avg_power_draw_w=mean_or_none([sample.power_draw_w for sample in samples]),
+        peak_power_draw_w=max_or_none([sample.power_draw_w for sample in samples]),
+        peak_temperature_c=max_or_none([sample.temperature_c for sample in samples]),
+        peak_fb_memory_used_mib=max_or_none([sample.memory_used_mib for sample in samples]),
+        peak_process_used_gpu_memory_mib=max_or_none(
             [sample.process_used_gpu_memory_mib for sample in samples]
         ),
-        peak_clocks_sm_mhz=_max_or_none([sample.clocks_sm_mhz for sample in samples]),
-        peak_clocks_mem_mhz=_max_or_none([sample.clocks_mem_mhz for sample in samples]),
-        avg_sm_activity_pct=_mean_or_none([sample.sm_activity_pct for sample in samples]),
-        peak_sm_activity_pct=_max_or_none([sample.sm_activity_pct for sample in samples]),
-        avg_sm_occupancy_pct=_mean_or_none([sample.sm_occupancy_pct for sample in samples]),
-        peak_sm_occupancy_pct=_max_or_none([sample.sm_occupancy_pct for sample in samples]),
-        avg_tensor_activity_pct=_mean_or_none([sample.tensor_activity_pct for sample in samples]),
-        peak_tensor_activity_pct=_max_or_none([sample.tensor_activity_pct for sample in samples]),
-        avg_dram_activity_pct=_mean_or_none([sample.dram_activity_pct for sample in samples]),
-        peak_dram_activity_pct=_max_or_none([sample.dram_activity_pct for sample in samples]),
-        avg_fp64_activity_pct=_mean_or_none([sample.fp64_activity_pct for sample in samples]),
-        peak_fp64_activity_pct=_max_or_none([sample.fp64_activity_pct for sample in samples]),
-        avg_fp32_activity_pct=_mean_or_none([sample.fp32_activity_pct for sample in samples]),
-        peak_fp32_activity_pct=_max_or_none([sample.fp32_activity_pct for sample in samples]),
-        avg_fp16_activity_pct=_mean_or_none([sample.fp16_activity_pct for sample in samples]),
-        peak_fp16_activity_pct=_max_or_none([sample.fp16_activity_pct for sample in samples]),
+        peak_clocks_sm_mhz=max_or_none([sample.clocks_sm_mhz for sample in samples]),
+        peak_clocks_mem_mhz=max_or_none([sample.clocks_mem_mhz for sample in samples]),
+        avg_sm_activity_pct=mean_or_none([sample.sm_activity_pct for sample in samples]),
+        peak_sm_activity_pct=max_or_none([sample.sm_activity_pct for sample in samples]),
+        avg_sm_occupancy_pct=mean_or_none([sample.sm_occupancy_pct for sample in samples]),
+        peak_sm_occupancy_pct=max_or_none([sample.sm_occupancy_pct for sample in samples]),
+        avg_tensor_activity_pct=mean_or_none([sample.tensor_activity_pct for sample in samples]),
+        peak_tensor_activity_pct=max_or_none([sample.tensor_activity_pct for sample in samples]),
+        avg_dram_activity_pct=mean_or_none([sample.dram_activity_pct for sample in samples]),
+        peak_dram_activity_pct=max_or_none([sample.dram_activity_pct for sample in samples]),
+        avg_fp64_activity_pct=mean_or_none([sample.fp64_activity_pct for sample in samples]),
+        peak_fp64_activity_pct=max_or_none([sample.fp64_activity_pct for sample in samples]),
+        avg_fp32_activity_pct=mean_or_none([sample.fp32_activity_pct for sample in samples]),
+        peak_fp32_activity_pct=max_or_none([sample.fp32_activity_pct for sample in samples]),
+        avg_fp16_activity_pct=mean_or_none([sample.fp16_activity_pct for sample in samples]),
+        peak_fp16_activity_pct=max_or_none([sample.fp16_activity_pct for sample in samples]),
     )
 
 
@@ -908,55 +572,3 @@ def print_gpu_telemetry_summary(
             f"SM {_format_float_metric(gpu.peak_clocks_sm_mhz, ' MHz')}, "
             f"MEM {_format_float_metric(gpu.peak_clocks_mem_mhz, ' MHz')}"
         )
-
-
-def print_resource_snapshot(snapshot: ResourceSnapshot) -> None:
-    """Print a compact resource snapshot."""
-    print(f"{snapshot.label}:")
-
-    if snapshot.process_rss_mib is None:
-        print("  Process RSS: unavailable")
-    else:
-        print(f"  Process RSS: {snapshot.process_rss_mib:.1f} MiB")
-
-    if snapshot.note is not None:
-        print(f"  GPU snapshot: unavailable ({snapshot.note})")
-        print()
-        return
-
-    if not snapshot.gpus:
-        print("  GPU snapshot: no devices reported")
-        print()
-        return
-
-    for gpu in snapshot.gpus:
-        memory_text = "unavailable"
-        if gpu.memory_used_mib is not None and gpu.memory_total_mib is not None:
-            memory_text = f"{gpu.memory_used_mib}/{gpu.memory_total_mib} MiB"
-
-        util_text = "?"
-        if gpu.utilization_gpu_pct is not None:
-            util_text = f"{gpu.utilization_gpu_pct}%"
-
-        temp_text = "?"
-        if gpu.temperature_c is not None:
-            temp_text = f"{gpu.temperature_c} C"
-
-        print(
-            f"  GPU {gpu.index} {gpu.name}: "
-            f"mem {memory_text}, util {util_text}, temp {temp_text}"
-        )
-
-    if snapshot.active_compute_processes:
-        for process in snapshot.active_compute_processes:
-            gpu_mem_text = "unavailable"
-            if process.used_gpu_memory_mib is not None:
-                gpu_mem_text = f"{process.used_gpu_memory_mib} MiB"
-            print(
-                "  Active compute process: "
-                f"pid={process.pid}, name={process.process_name}, gpu_mem={gpu_mem_text}"
-            )
-    else:
-        print("  Active compute process: this Python process is not listed right now")
-
-    print()

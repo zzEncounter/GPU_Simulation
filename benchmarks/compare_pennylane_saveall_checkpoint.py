@@ -7,11 +7,9 @@ import csv
 import ctypes
 import ctypes.util
 import json
-import math
 import statistics
 import subprocess
 import sys
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -22,8 +20,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from runtime_utils import GpuTelemetryMonitor, GpuTelemetrySummary
-from run_pennylane_baseline import BaselineConfig, create_workflow
+from ring_ising.baseline import BaselineConfig, create_workflow
+from ring_ising.runtime import (
+    GpuTelemetrySummary,
+    capture_telemetry_window,
+    derive_timing_breakdown,
+    median_runtime_ms,
+    median_timing_fields,
+)
 from standalone_backend import RingIsingAdjointBackend, RingIsingConfig, make_initial_params
 
 
@@ -129,44 +133,6 @@ def _cuda_synchronize() -> None:
         _CUDA_RUNTIME = False
 
 
-def _median_runtime_ms(fn, repeats: int, warmup: int) -> float:
-    for _ in range(warmup):
-        fn()
-        _cuda_synchronize()
-    samples: list[float] = []
-    for _ in range(repeats):
-        _cuda_synchronize()
-        start = time.perf_counter()
-        fn()
-        _cuda_synchronize()
-        samples.append((time.perf_counter() - start) * 1000.0)
-    return statistics.median(samples)
-
-
-def _derive_timing_breakdown(
-    forward_ms: float, gradient_ms: float
-) -> tuple[float, float]:
-    back_ms = max(0.0, gradient_ms - forward_ms)
-    total_ms = forward_ms + back_ms
-    return back_ms, total_ms
-
-
-def _median_timing_fields(fn, repeats: int, warmup: int) -> dict[str, float]:
-    for _ in range(warmup):
-        fn()
-    samples: dict[str, list[float]] = {
-        "forward_ms": [],
-        "back_ms": [],
-        "gradient_ms": [],
-        "total_ms": [],
-    }
-    for _ in range(repeats):
-        raw = fn()
-        for key in samples:
-            samples[key].append(float(raw[key]))
-    return {key: statistics.median(values) for key, values in samples.items()}
-
-
 def _peak_memory_from_summary(summary: GpuTelemetrySummary) -> tuple[int | None, int | None]:
     if not summary.gpus:
         return None, None
@@ -187,17 +153,6 @@ def _peak_memory_from_summary(summary: GpuTelemetrySummary) -> tuple[int | None,
         default=None,
     )
     return peak_fb, peak_proc
-
-
-def _capture_telemetry(fn, target_ms: float, measured_ms: float, interval_s: float) -> GpuTelemetrySummary:
-    repeats = 1
-    if measured_ms > 0:
-        repeats = max(1, min(100, int(math.ceil(target_ms / measured_ms))))
-    monitor = GpuTelemetryMonitor(sample_interval_s=interval_s, live=False)
-    monitor.start()
-    for _ in range(repeats):
-        fn()
-    return monitor.stop()
 
 
 def _build_reference(case: BenchmarkCase, field: float, seed: int, init_scale: float) -> tuple[np.ndarray, ReferenceData]:
@@ -249,14 +204,20 @@ def _benchmark_pennylane(
     )
 
     try:
-        forward_ms = _median_runtime_ms(lambda: float(workflow.energy_qnode(params_pl)), repeats, warmup)
-        gradient_ms = _median_runtime_ms(
+        forward_ms = median_runtime_ms(
+            lambda: float(workflow.energy_qnode(params_pl)),
+            repeats,
+            warmup,
+            synchronize=_cuda_synchronize,
+        )
+        gradient_ms = median_runtime_ms(
             lambda: np.asarray(workflow.gradient_fn(params_pl), dtype=np.float64),
             repeats,
             warmup,
+            synchronize=_cuda_synchronize,
         )
-        back_ms, total_ms = _derive_timing_breakdown(forward_ms, gradient_ms)
-        telemetry_summary = _capture_telemetry(
+        back_ms, total_ms = derive_timing_breakdown(forward_ms, gradient_ms)
+        telemetry_summary = capture_telemetry_window(
             lambda: np.asarray(workflow.gradient_fn(params_pl), dtype=np.float64),
             target_ms=telemetry_target_ms,
             measured_ms=gradient_ms,
@@ -347,15 +308,18 @@ def _benchmark_standalone(
             grad_max_abs_diff = None
             grad_l2_diff = None
 
-        timings = _median_timing_fields(
-            lambda: backend.energy_and_grad_with_timings(params_np), repeats, warmup
+        timings = median_timing_fields(
+            lambda: backend.energy_and_grad_with_timings(params_np),
+            ("forward_ms", "back_ms", "gradient_ms", "total_ms"),
+            repeats,
+            warmup,
         )
         forward_ms = timings["forward_ms"]
         back_ms = timings["back_ms"]
         gradient_ms = timings["gradient_ms"]
         total_ms = timings["total_ms"]
         heavy_call = lambda: backend.energy_and_grad(params_np)
-        telemetry_summary = _capture_telemetry(
+        telemetry_summary = capture_telemetry_window(
             heavy_call,
             target_ms=telemetry_target_ms,
             measured_ms=gradient_ms,

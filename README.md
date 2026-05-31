@@ -11,13 +11,13 @@
 
 ## 目录结构
 
-- `run_pennylane_baseline.py`：PennyLane 基线路径入口。
-- `run_standalone_backend.py`：Standalone CUDA 路径入口。
-- `ising_model.py`：Ising Hamiltonian 和电路相关可复用构件。
-- `runtime_utils.py`：计时、资源采样等运行辅助工具。
+- `ring_ising/`：前端 Python 包，包含 baseline workflow、CLI、模型构件，以及拆分后的 `runtime/device|resources|telemetry|timing` 辅助层。
+- `run_pennylane_baseline.py`：PennyLane 基线路径入口兼容包装。
+- `run_standalone_backend.py`：Standalone CUDA 路径入口兼容包装。
 - `standalone_backend/`：Python 侧 runtime。
 - `cpp/`：C++/CUDA 扩展实现。
 - `benchmarks/compare_pennylane_saveall_checkpoint.py`：PennyLane 与 standalone 策略对比脚本。
+- `benchmarks/compare_save_vs_bruteforce_q6.py`：`save_param_states` 与 `bruteforce_parallel_q6` 专项对比脚本（含时间拆解与 GPU 遥测）。
 - `tests/test_backends_parity.py`：数值一致性测试。
 - `old/`：历史归档（已从版本控制排除）。
 
@@ -112,4 +112,11 @@ python -m venv .venv
   --cases 20x4 \
   --standalone-modes save_param_states checkpoint \
   --disable-gate-fusion
+```
+
+专项对比（仅 `save_param_states` vs `bruteforce_parallel_q6`）：
+
+```bash
+.venv/bin/python benchmarks/compare_save_vs_bruteforce_q6.py \
+  --cases 5x8 6x8
 ```

@@ -8,7 +8,7 @@ import numpy as np
 import pennylane as qml
 from pennylane import numpy as pnp
 
-from ising_model import build_ring_ising_hamiltonian, hardware_efficient_ring
+from ring_ising.models import build_ring_ising_hamiltonian, hardware_efficient_ring
 from standalone_backend import RingIsingAdjointBackend, RingIsingConfig
 
 

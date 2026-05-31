@@ -305,11 +305,8 @@ setup(
         ]
     ),
     py_modules=[
-        "ising_model",
-        "run_cli_utils",
         "run_pennylane_baseline",
         "run_standalone_backend",
-        "runtime_utils",
     ],
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildCudaExtension},
