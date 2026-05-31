@@ -11,7 +11,7 @@
 
 ## 目录结构
 
-- `ring_ising/`：前端 Python 包，包含 baseline workflow、CLI、模型构件，以及拆分后的 `runtime/device|resources|telemetry|timing` 辅助层。
+- `ring_ising/`：前端 Python 包，包含 baseline workflow、CLI、模型构件，以及拆分后的 `runtime/device|telemetry|timing` 辅助层。
 - `run_pennylane_baseline.py`：PennyLane 基线路径入口兼容包装。
 - `run_standalone_backend.py`：Standalone CUDA 路径入口兼容包装。
 - `standalone_backend/`：Python 侧 runtime。

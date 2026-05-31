@@ -1,16 +1,7 @@
-"""Runtime helpers for device selection, snapshots, telemetry, and timing."""
+"""Runtime helpers for device selection, telemetry, and timing."""
 
 from .device import DEVICE_CANDIDATES, DeviceSelection, create_device
 from .meta import format_gate_types, package_version
-from .resources import (
-    ComputeProcessSnapshot,
-    GpuSnapshot,
-    ResourceSnapshot,
-    capture_resource_snapshot,
-    print_resource_snapshot,
-    process_rss_mib,
-    query_nvidia_smi,
-)
 from .telemetry import (
     GpuTelemetryGpuSummary,
     GpuTelemetryMonitor,
@@ -30,17 +21,12 @@ from .timing import (
 
 __all__ = [
     "DEVICE_CANDIDATES",
-    "ComputeProcessSnapshot",
     "DeviceSelection",
-    "GpuSnapshot",
     "GpuTelemetryGpuSummary",
     "GpuTelemetryMonitor",
     "GpuTelemetrySample",
     "GpuTelemetrySnapshot",
     "GpuTelemetrySummary",
-    "ResourceSnapshot",
-    "capture_gpu_telemetry_snapshot",
-    "capture_resource_snapshot",
     "capture_telemetry_window",
     "create_device",
     "derive_timing_breakdown",
@@ -50,7 +36,4 @@ __all__ = [
     "package_version",
     "print_gpu_telemetry_summary",
     "print_live_gpu_telemetry_snapshot",
-    "print_resource_snapshot",
-    "process_rss_mib",
-    "query_nvidia_smi",
 ]

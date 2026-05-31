@@ -22,13 +22,10 @@ from ring_ising.models import (
 )
 from ring_ising.runtime import (
     GpuTelemetrySummary,
-    ResourceSnapshot,
-    capture_resource_snapshot,
     create_device,
     format_gate_types,
     package_version,
     print_gpu_telemetry_summary,
-    print_resource_snapshot,
 )
 
 
@@ -98,7 +95,6 @@ class BaselineResult:
     z_profile: np.ndarray
     timings: TimingBreakdown
     step_metrics: tuple[StepMetric, ...]
-    resource_snapshots: tuple[ResourceSnapshot, ...]
     gpu_telemetry_summary: GpuTelemetrySummary | None = None
 
 
@@ -204,38 +200,6 @@ def _validate_config(config: BaselineConfig) -> None:
         raise ValueError("telemetry_interval_s must be positive.")
 
 
-def _capture_snapshot(
-    label: str, snapshots: list[ResourceSnapshot], verbose: bool
-) -> ResourceSnapshot:
-    """Capture and optionally print a resource snapshot."""
-    snapshot = capture_resource_snapshot(label)
-    snapshots.append(snapshot)
-    if verbose:
-        print_resource_snapshot(snapshot)
-    return snapshot
-
-
-def _peak_process_rss_mib(snapshots: list[ResourceSnapshot]) -> float | None:
-    """Return the peak observed process RSS across snapshots."""
-    rss_values = [
-        snapshot.process_rss_mib
-        for snapshot in snapshots
-        if snapshot.process_rss_mib is not None
-    ]
-    return max(rss_values) if rss_values else None
-
-
-def _peak_active_gpu_memory_mib(snapshots: list[ResourceSnapshot]) -> int | None:
-    """Return the peak observed GPU memory for the current compute process."""
-    gpu_mem_values = [
-        process.used_gpu_memory_mib
-        for snapshot in snapshots
-        for process in snapshot.active_compute_processes
-        if process.used_gpu_memory_mib is not None
-    ]
-    return max(gpu_mem_values) if gpu_mem_values else None
-
-
 def _run_measured_loop(
     workflow: BaselineWorkflow,
     config: BaselineConfig,
@@ -248,15 +212,15 @@ def _run_measured_loop(
 
     measured_start = time.perf_counter()
     for step in range(1, config.steps + 1):
-        step_start = time.perf_counter()
-        grad_start = time.perf_counter()
+        step_start = grad_start = time.perf_counter()
+
         grad = workflow.gradient_fn(params)
         grad_wall_s = time.perf_counter() - grad_start
         gradient_wall_s += grad_wall_s
 
         params = _apply_gradient_step(params, grad, config.stepsize)
-        grad_norm = float(np.linalg.norm(np.asarray(grad)))
         step_wall_s = time.perf_counter() - step_start
+        grad_norm = float(np.linalg.norm(np.asarray(grad)))
 
         if should_report_step(step, config.steps, config.report_every, one_based=True):
             energy = float(workflow.energy_qnode(params))
@@ -299,8 +263,6 @@ def _print_result_summary(result: BaselineResult) -> None:
     """Print a compact end-of-run summary."""
     config = result.workflow.config
     timings = result.timings
-    peak_rss_mib = _peak_process_rss_mib(list(result.resource_snapshots))
-    peak_gpu_mem_mib = _peak_active_gpu_memory_mib(list(result.resource_snapshots))
     avg_grad_s = timings.gradient_wall_s / config.steps if config.steps else 0.0
     avg_step_s = timings.measured_loop_s / config.steps if config.steps else 0.0
     non_gradient_s = max(0.0, timings.measured_loop_s - timings.gradient_wall_s)
@@ -326,10 +288,6 @@ def _print_result_summary(result: BaselineResult) -> None:
     print(f"  Gradient share of measured loop: {gradient_share:.1%}")
     print(f"  Average gradient call: {avg_grad_s:.4f} s")
     print(f"  Average measured step: {avg_step_s:.4f} s")
-    if peak_rss_mib is not None:
-        print(f"  Peak process RSS: {peak_rss_mib:.1f} MiB")
-    if peak_gpu_mem_mib is not None:
-        print(f"  Peak process GPU memory: {peak_gpu_mem_mib} MiB")
     print(f"  First local <Z> values: {z_preview}")
     if result.gpu_telemetry_summary is not None:
         print()
@@ -343,7 +301,6 @@ def run_baseline(
     _validate_config(config)
     workflow = create_workflow(config)
     params = _fresh_params(config)
-    resource_snapshots: list[ResourceSnapshot] = []
     telemetry_monitor = create_telemetry_monitor(
         enabled=config.gpu_telemetry,
         interval_s=config.telemetry_interval_s,
@@ -362,46 +319,18 @@ def run_baseline(
                     config.telemetry_live,
                 )
             )
-            print()
+        if config.warmup:
+            print(f"Warmup gradient calls: {config.warmup}")
+        print()
 
     if telemetry_monitor is not None:
         telemetry_monitor.start()
 
     try:
-        _capture_snapshot(
-            "Resource snapshot before first execution",
-            resource_snapshots,
-            config.verbose,
-        )
-
-        initial_forward_start = time.perf_counter()
-        initial_energy = float(workflow.energy_qnode(params))
-        initial_forward_s = time.perf_counter() - initial_forward_start
-
-        if config.verbose:
-            print(f"Initial energy: {initial_energy:.7f}")
-            print(f"Initial forward wall time: {initial_forward_s:.4f} s")
-            if config.warmup:
-                print(f"Warmup gradient calls: {config.warmup}")
-            print()
-
-        _capture_snapshot(
-            "Resource snapshot after initial execution",
-            resource_snapshots,
-            config.verbose,
-        )
-
         warmup_start = time.perf_counter()
         if config.warmup:
             _run_warmup(workflow, config)
         warmup_s = time.perf_counter() - warmup_start
-
-        if config.warmup:
-            _capture_snapshot(
-                "Resource snapshot after warmup",
-                resource_snapshots,
-                config.verbose,
-            )
 
         params = _fresh_params(config)
         params, step_metrics, gradient_wall_s, measured_loop_s = _run_measured_loop(
@@ -410,29 +339,19 @@ def run_baseline(
             params,
             config.verbose,
         )
-        _capture_snapshot(
-            "Resource snapshot after measured loop",
-            resource_snapshots,
-            config.verbose,
-        )
 
         final_energy, z_profile, mean_local_z, final_readout_s = _final_readout(workflow, params)
-        _capture_snapshot(
-            "Resource snapshot after final readout",
-            resource_snapshots,
-            config.verbose,
-        )
     finally:
         if telemetry_monitor is not None:
             gpu_telemetry_summary = telemetry_monitor.stop()
 
     timings = TimingBreakdown(
-        initial_forward_s=initial_forward_s,
+        initial_forward_s=0,
         warmup_s=warmup_s,
         measured_loop_s=measured_loop_s,
         gradient_wall_s=gradient_wall_s,
         final_readout_s=final_readout_s,
-        total_compute_s=initial_forward_s + warmup_s + measured_loop_s + final_readout_s,
+        total_compute_s=0 + warmup_s + measured_loop_s + final_readout_s,
     )
 
     result = BaselineResult(
@@ -443,7 +362,6 @@ def run_baseline(
         z_profile=z_profile,
         timings=timings,
         step_metrics=step_metrics,
-        resource_snapshots=tuple(resource_snapshots),
         gpu_telemetry_summary=gpu_telemetry_summary,
     )
 
