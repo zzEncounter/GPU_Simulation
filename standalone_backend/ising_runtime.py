@@ -73,7 +73,12 @@ class RingIsingAdjointBackend:
         """Evaluate the Ising energy using the custom CUDA backend."""
 
         flat = self._normalize_params(params)
-        return float(self._cuda.forward_energy(flat))
+        raw = self._cuda.energy_and_grad(
+            flat,
+            False,
+            False,
+        )
+        return float(raw["energy"])
 
     def energy_and_grad(
         self,

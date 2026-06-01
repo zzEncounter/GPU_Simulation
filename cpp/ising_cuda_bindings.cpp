@@ -75,30 +75,24 @@ PYBIND11_MODULE(_cuda_backend, m) {
              py::arg("fuse_ring_cnot_layer") = true,
              py::arg("checkpoint_interval_ops") = 0)
         .def(
-            "forward_energy",
-            [](standalone_backend::RingIsingCudaBackend &self,
-               FlatArray params) {
-                const auto view = view_params(params);
-                py::gil_scoped_release release;
-                return self.forward_energy(view.ptr, view.size);
-            },
-            py::arg("params"))
-        .def(
             "energy_and_grad",
             [](standalone_backend::RingIsingCudaBackend &self,
                FlatArray params,
-               bool measure_timings) {
+               bool measure_timings,
+               bool compute_gradient) {
                 const auto view = view_params(params);
                 standalone_backend::EnergyGradResult result;
                 {
                     py::gil_scoped_release release;
                     result =
-                        self.energy_and_grad(view.ptr, view.size, measure_timings);
+                        self.energy_and_grad(view.ptr, view.size, measure_timings,
+                                             compute_gradient);
                 }
                 return make_energy_grad_dict(result);
             },
             py::arg("params"),
-            py::arg("measure_timings") = true)
+            py::arg("measure_timings") = true,
+            py::arg("compute_gradient") = true)
         .def(
             "dense_scan_experiment",
             [](standalone_backend::RingIsingCudaBackend &self,
@@ -132,27 +126,14 @@ PYBIND11_MODULE(_cuda_backend, m) {
             py::arg("params"));
 
     m.def(
-        "forward_energy",
-        [](std::size_t num_qubits, std::size_t num_layers, double field,
-           FlatArray params) {
-            validate_params_shape(num_qubits, num_layers, params);
-            const auto view = view_params(params);
-            py::gil_scoped_release release;
-            return standalone_backend::forward_energy(num_qubits, num_layers,
-                                                      field, view.ptr,
-                                                      view.size, true);
-        },
-        py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
-        py::arg("params"));
-
-    m.def(
         "energy_and_grad",
         [](std::size_t num_qubits, std::size_t num_layers, double field,
            const std::string &gradient_strategy,
            bool fuse_ring_cnot_layer,
            std::size_t checkpoint_interval_ops,
            FlatArray params,
-           bool measure_timings) {
+           bool measure_timings,
+           bool compute_gradient) {
             validate_params_shape(num_qubits, num_layers, params);
             const auto view = view_params(params);
             standalone_backend::EnergyGradResult result;
@@ -161,7 +142,8 @@ PYBIND11_MODULE(_cuda_backend, m) {
                 result = standalone_backend::energy_and_grad(
                     num_qubits, num_layers, field, gradient_strategy,
                     fuse_ring_cnot_layer, view.ptr, view.size,
-                    checkpoint_interval_ops, measure_timings);
+                    checkpoint_interval_ops, measure_timings,
+                    compute_gradient);
             }
             return make_energy_grad_dict(result);
         },
@@ -170,7 +152,8 @@ PYBIND11_MODULE(_cuda_backend, m) {
         py::arg("fuse_ring_cnot_layer") = true,
         py::arg("checkpoint_interval_ops") = 0,
         py::arg("params"),
-        py::arg("measure_timings") = true);
+        py::arg("measure_timings") = true,
+        py::arg("compute_gradient") = true);
 
     m.def(
         "dense_scan_experiment",
