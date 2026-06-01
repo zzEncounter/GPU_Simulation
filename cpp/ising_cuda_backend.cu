@@ -796,7 +796,8 @@ auto run_dense_scan_experiment(RingIsingCudaBackend::Impl &impl,
     -> DenseScanExperimentResult;
 auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
                                          const double *params,
-                                         std::size_t num_params)
+                                         std::size_t num_params,
+                                         bool measure_timings)
     -> EnergyGradResult;
 
 double run_forward_energy_only(std::size_t num_qubits, std::size_t num_layers,
@@ -852,7 +853,7 @@ auto run_forward_energy_only(RingIsingCudaBackend::Impl &impl,
 
 auto run_energy_and_grad_save_param_states(
     RingIsingCudaBackend::Impl &impl, const double *params,
-    std::size_t num_params) -> EnergyGradResult {
+    std::size_t num_params, bool measure_timings) -> EnergyGradResult {
     const auto total_start = std::chrono::steady_clock::now();
     validate_num_params(impl.expected_params, num_params);
     const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
@@ -878,8 +879,10 @@ auto run_energy_and_grad_save_param_states(
     const Complex energy_complex =
         detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
                                       impl.state_size);
-    detail::check_cuda(cudaDeviceSynchronize(),
-                       "run_energy_and_grad_save_param_states forward");
+    if (measure_timings) {
+        detail::check_cuda(cudaDeviceSynchronize(),
+                           "run_energy_and_grad_save_param_states forward");
+    }
     const auto forward_end = std::chrono::steady_clock::now();
 
     EnergyGradResult result;
@@ -909,39 +912,50 @@ auto run_energy_and_grad_save_param_states(
                                                   impl.state_size);
                 result.gradient[op.param_index0] = 2.0 * grad_complex.real();
             }
-            detail::check_cuda(cudaDeviceSynchronize(),
-                               "run_energy_and_grad_save_param_states gradient");
-            gradient_ms += elapsed_ms(gradient_start,
-                                      std::chrono::steady_clock::now());
+            if (measure_timings) {
+                detail::check_cuda(
+                    cudaDeviceSynchronize(),
+                    "run_energy_and_grad_save_param_states gradient");
+                gradient_ms += elapsed_ms(gradient_start,
+                                          std::chrono::steady_clock::now());
+            }
         }
         if (reverse_index != 0) {
             const auto back_start = std::chrono::steady_clock::now();
             apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
                              impl.scratch.get(), impl.num_qubits);
-            detail::check_cuda(cudaDeviceSynchronize(),
-                               "run_energy_and_grad_save_param_states back");
-            back_ms += elapsed_ms(back_start, std::chrono::steady_clock::now());
+            if (measure_timings) {
+                detail::check_cuda(cudaDeviceSynchronize(),
+                                   "run_energy_and_grad_save_param_states back");
+                back_ms += elapsed_ms(back_start, std::chrono::steady_clock::now());
+            }
         }
     }
 
-    detail::check_cuda(cudaDeviceSynchronize(),
-                       "run_energy_and_grad_save_param_states completion");
-    result.forward_ms = elapsed_ms(forward_start, forward_end);
-    result.back_ms = back_ms;
-    result.gradient_ms = gradient_ms;
-    result.total_ms = elapsed_ms(total_start, std::chrono::steady_clock::now());
+    if (measure_timings) {
+        detail::check_cuda(cudaDeviceSynchronize(),
+                           "run_energy_and_grad_save_param_states completion");
+    }
+    result.forward_ms = measure_timings ? elapsed_ms(forward_start, forward_end) : 0.0;
+    result.back_ms = measure_timings ? back_ms : 0.0;
+    result.gradient_ms = measure_timings ? gradient_ms : 0.0;
+    result.total_ms =
+        measure_timings ? elapsed_ms(total_start, std::chrono::steady_clock::now())
+                        : 0.0;
     return result;
 }
 
 auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
                                       const double *params,
-                                      std::size_t num_params)
+                                      std::size_t num_params,
+                                      bool measure_timings)
     -> EnergyGradResult {
     const auto total_start = std::chrono::steady_clock::now();
     validate_num_params(impl.expected_params, num_params);
 
     if (impl.strategy == GradientStrategy::BruteForceParallelQ6) {
-        return run_dense_scan_energy_and_grad_fast(impl, params, num_params);
+        return run_dense_scan_energy_and_grad_fast(impl, params, num_params,
+                                                   measure_timings);
     }
 
     const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
@@ -949,7 +963,8 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
     const auto num_ops = ops.size();
 
     if (impl.strategy == GradientStrategy::SaveParamStates) {
-        return run_energy_and_grad_save_param_states(impl, params, num_params);
+        return run_energy_and_grad_save_param_states(impl, params, num_params,
+                                                     measure_timings);
     }
 
     const auto forward_start = std::chrono::steady_clock::now();
@@ -975,8 +990,10 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
     const Complex energy_complex =
         detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
                                       impl.state_size);
-    detail::check_cuda(cudaDeviceSynchronize(),
-                       "run_energy_and_grad_checkpointed forward");
+    if (measure_timings) {
+        detail::check_cuda(cudaDeviceSynchronize(),
+                           "run_energy_and_grad_checkpointed forward");
+    }
     const auto forward_end = std::chrono::steady_clock::now();
 
     EnergyGradResult result;
@@ -1007,10 +1024,12 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
                            local_idx + 1),
                 impl.current.get(), impl.state_size);
         }
-        detail::check_cuda(cudaDeviceSynchronize(),
-                           "run_energy_and_grad_checkpointed recompute");
-        back_ms += elapsed_ms(back_recompute_start,
-                              std::chrono::steady_clock::now());
+        if (measure_timings) {
+            detail::check_cuda(cudaDeviceSynchronize(),
+                               "run_energy_and_grad_checkpointed recompute");
+            back_ms += elapsed_ms(back_recompute_start,
+                                  std::chrono::steady_clock::now());
+        }
 
         for (std::size_t op_idx = chunk_end; op_idx-- > chunk_start;) {
             const auto &op = ops[op_idx];
@@ -1035,28 +1054,36 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
                                                       impl.state_size);
                     result.gradient[op.param_index0] = 2.0 * grad_complex.real();
                 }
-                detail::check_cuda(cudaDeviceSynchronize(),
-                                   "run_energy_and_grad_checkpointed gradient");
-                gradient_ms += elapsed_ms(gradient_start,
-                                          std::chrono::steady_clock::now());
+                if (measure_timings) {
+                    detail::check_cuda(cudaDeviceSynchronize(),
+                                       "run_energy_and_grad_checkpointed gradient");
+                    gradient_ms += elapsed_ms(gradient_start,
+                                              std::chrono::steady_clock::now());
+                }
             }
             if (op_idx != 0) {
                 const auto back_start = std::chrono::steady_clock::now();
                 apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
                                  impl.scratch.get(), impl.num_qubits);
-                detail::check_cuda(cudaDeviceSynchronize(),
-                                   "run_energy_and_grad_checkpointed back");
-                back_ms += elapsed_ms(back_start, std::chrono::steady_clock::now());
+                if (measure_timings) {
+                    detail::check_cuda(cudaDeviceSynchronize(),
+                                       "run_energy_and_grad_checkpointed back");
+                    back_ms += elapsed_ms(back_start, std::chrono::steady_clock::now());
+                }
             }
         }
     }
 
-    detail::check_cuda(cudaDeviceSynchronize(),
-                       "run_energy_and_grad_checkpointed completion");
-    result.forward_ms = elapsed_ms(forward_start, forward_end);
-    result.back_ms = back_ms;
-    result.gradient_ms = gradient_ms;
-    result.total_ms = elapsed_ms(total_start, std::chrono::steady_clock::now());
+    if (measure_timings) {
+        detail::check_cuda(cudaDeviceSynchronize(),
+                           "run_energy_and_grad_checkpointed completion");
+    }
+    result.forward_ms = measure_timings ? elapsed_ms(forward_start, forward_end) : 0.0;
+    result.back_ms = measure_timings ? back_ms : 0.0;
+    result.gradient_ms = measure_timings ? gradient_ms : 0.0;
+    result.total_ms =
+        measure_timings ? elapsed_ms(total_start, std::chrono::steady_clock::now())
+                        : 0.0;
     return result;
 }
 
@@ -1381,7 +1408,8 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
 
 auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
                                          const double *params,
-                                         std::size_t num_params)
+                                         std::size_t num_params,
+                                         bool measure_timings)
     -> EnergyGradResult {
     if (impl.num_qubits > 6) {
         throw std::invalid_argument(
@@ -1401,6 +1429,12 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     result.back_ms = gpu.back_ms;
     result.gradient_ms = gpu.gradient_ms;
     result.total_ms = gpu.total_ms;
+    if (!measure_timings) {
+        result.forward_ms = 0.0;
+        result.back_ms = 0.0;
+        result.gradient_ms = 0.0;
+        result.total_ms = 0.0;
+    }
     return result;
 }
 
@@ -1430,7 +1464,7 @@ auto run_dense_scan_experiment(RingIsingCudaBackend::Impl &impl,
 
     const auto seq_start = std::chrono::steady_clock::now();
     const auto sequential_result =
-        run_energy_and_grad_save_param_states(impl, params, num_params);
+        run_energy_and_grad_save_param_states(impl, params, num_params, false);
     const auto seq_end = std::chrono::steady_clock::now();
     const double sequential_statevector_ms =
         std::chrono::duration<double, std::milli>(seq_end - seq_start).count();
@@ -1500,9 +1534,11 @@ auto RingIsingCudaBackend::forward_energy(const double *params,
 }
 
 auto RingIsingCudaBackend::energy_and_grad(const double *params,
-                                           std::size_t num_params)
+                                           std::size_t num_params,
+                                           bool measure_timings)
     -> EnergyGradResult {
-    return run_energy_and_grad_checkpointed(*impl_, params, num_params);
+    return run_energy_and_grad_checkpointed(*impl_, params, num_params,
+                                            measure_timings);
 }
 
 auto RingIsingCudaBackend::dense_scan_experiment(const double *params,
@@ -1524,12 +1560,13 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  const std::string &gradient_strategy,
                                  bool fuse_ring_cnot_layer,
                                  const double *params, std::size_t num_params,
-                                 std::size_t checkpoint_interval_ops) {
+                                 std::size_t checkpoint_interval_ops,
+                                 bool measure_timings) {
     RingIsingCudaBackend backend(num_qubits, num_layers, field,
                                  gradient_strategy,
                                  fuse_ring_cnot_layer,
                                  checkpoint_interval_ops);
-    return backend.energy_and_grad(params, num_params);
+    return backend.energy_and_grad(params, num_params, measure_timings);
 }
 
 DenseScanExperimentResult dense_scan_experiment(

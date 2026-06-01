@@ -39,20 +39,9 @@ def add_optimization_args(
     seed_default: int,
     init_scale_default: float,
     report_every_default: int,
-    include_warmup: bool = False,
-    warmup_default: int | None = None,
 ) -> None:
     """Add common loop and initialization arguments."""
     parser.add_argument("--steps", type=int, default=steps_default, help="Measured gradient steps.")
-    if include_warmup:
-        if warmup_default is None:
-            raise ValueError("warmup_default must be provided when include_warmup=True.")
-        parser.add_argument(
-            "--warmup",
-            type=int,
-            default=warmup_default,
-            help="Warmup gradient calls before the measured loop.",
-        )
     parser.add_argument(
         "--stepsize",
         type=float,
@@ -141,23 +130,4 @@ def format_telemetry_banner(interval_s: float, live: bool) -> str:
     return (
         f"sampling every {interval_s:.2f} s"
         + (" with live printing enabled." if live else ".")
-    )
-
-
-def should_report_step(
-    step: int,
-    total_steps: int,
-    report_every: int,
-    *,
-    one_based: bool = False,
-) -> bool:
-    """Return whether a step should emit a progress line."""
-    if total_steps <= 0:
-        return False
-
-    current_step = step if one_based else step + 1
-    return (
-        current_step == 1
-        or current_step == total_steps
-        or current_step % report_every == 0
     )

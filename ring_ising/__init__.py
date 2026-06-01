@@ -2,11 +2,14 @@
 
 from .baseline import BaselineConfig, BaselineResult, BaselineWorkflow, create_workflow, run_baseline
 from .models import apply_ring_layer, build_ring_ising_hamiltonian, hardware_efficient_ring, make_initial_params
+from .training import LoopTimingBreakdown, TrainingRunResult
 
 __all__ = [
     "BaselineConfig",
     "BaselineResult",
     "BaselineWorkflow",
+    "LoopTimingBreakdown",
+    "TrainingRunResult",
     "apply_ring_layer",
     "build_ring_ising_hamiltonian",
     "create_workflow",

@@ -10,10 +10,22 @@ namespace py = pybind11;
 
 namespace {
 
+using FlatArray =
+    py::array_t<double, py::array::c_style | py::array::forcecast>;
+
+struct ParamsView {
+    const double *ptr;
+    std::size_t size;
+};
+
+auto view_params(const FlatArray &params) -> ParamsView {
+    const auto buffer = params.request();
+    return {static_cast<const double *>(buffer.ptr),
+            static_cast<std::size_t>(buffer.size)};
+}
+
 void validate_params_shape(std::size_t num_qubits, std::size_t num_layers,
-                           py::array_t<double, py::array::c_style |
-                                                   py::array::forcecast>
-                               params) {
+                           FlatArray params) {
     const auto buffer = params.request();
     const auto expected = static_cast<py::ssize_t>(num_qubits * num_layers * 2);
     if (buffer.ndim != 1) {
@@ -65,71 +77,37 @@ PYBIND11_MODULE(_cuda_backend, m) {
         .def(
             "forward_energy",
             [](standalone_backend::RingIsingCudaBackend &self,
-               py::array_t<double, py::array::c_style | py::array::forcecast>
-                   params) {
-                const auto buffer = params.request();
-                const auto *params_ptr =
-                    static_cast<const double *>(buffer.ptr);
-                const auto params_size =
-                    static_cast<std::size_t>(buffer.size);
+               FlatArray params) {
+                const auto view = view_params(params);
                 py::gil_scoped_release release;
-                return self.forward_energy(params_ptr, params_size);
+                return self.forward_energy(view.ptr, view.size);
             },
             py::arg("params"))
         .def(
             "energy_and_grad",
             [](standalone_backend::RingIsingCudaBackend &self,
-               py::array_t<double, py::array::c_style | py::array::forcecast>
-                   params) {
-                const auto buffer = params.request();
-                const auto *params_ptr =
-                    static_cast<const double *>(buffer.ptr);
-                const auto params_size =
-                    static_cast<std::size_t>(buffer.size);
+               FlatArray params,
+               bool measure_timings) {
+                const auto view = view_params(params);
                 standalone_backend::EnergyGradResult result;
                 {
                     py::gil_scoped_release release;
-                    result = self.energy_and_grad(params_ptr, params_size);
-                }
-
-                py::array_t<double> grad(result.gradient.size());
-                std::memcpy(grad.mutable_data(), result.gradient.data(),
-                            result.gradient.size() * sizeof(double));
-                return py::make_tuple(result.energy, grad);
-            },
-            py::arg("params"))
-        .def(
-            "energy_and_grad_with_timings",
-            [](standalone_backend::RingIsingCudaBackend &self,
-               py::array_t<double, py::array::c_style | py::array::forcecast>
-                   params) {
-                const auto buffer = params.request();
-                const auto *params_ptr =
-                    static_cast<const double *>(buffer.ptr);
-                const auto params_size =
-                    static_cast<std::size_t>(buffer.size);
-                standalone_backend::EnergyGradResult result;
-                {
-                    py::gil_scoped_release release;
-                    result = self.energy_and_grad(params_ptr, params_size);
+                    result =
+                        self.energy_and_grad(view.ptr, view.size, measure_timings);
                 }
                 return make_energy_grad_dict(result);
             },
-            py::arg("params"))
+            py::arg("params"),
+            py::arg("measure_timings") = true)
         .def(
             "dense_scan_experiment",
             [](standalone_backend::RingIsingCudaBackend &self,
-               py::array_t<double, py::array::c_style | py::array::forcecast>
-                   params) {
-                const auto buffer = params.request();
-                const auto *params_ptr =
-                    static_cast<const double *>(buffer.ptr);
-                const auto params_size =
-                    static_cast<std::size_t>(buffer.size);
+               FlatArray params) {
+                const auto view = view_params(params);
                 standalone_backend::DenseScanExperimentResult result;
                 {
                     py::gil_scoped_release release;
-                    result = self.dense_scan_experiment(params_ptr, params_size);
+                    result = self.dense_scan_experiment(view.ptr, view.size);
                 }
 
                 py::array_t<double> grad(result.gradient.size());
@@ -156,16 +134,13 @@ PYBIND11_MODULE(_cuda_backend, m) {
     m.def(
         "forward_energy",
         [](std::size_t num_qubits, std::size_t num_layers, double field,
-           py::array_t<double, py::array::c_style | py::array::forcecast>
-               params) {
+           FlatArray params) {
             validate_params_shape(num_qubits, num_layers, params);
-            const auto buffer = params.request();
-            const auto *params_ptr = static_cast<const double *>(buffer.ptr);
-            const auto params_size = static_cast<std::size_t>(buffer.size);
+            const auto view = view_params(params);
             py::gil_scoped_release release;
             return standalone_backend::forward_energy(num_qubits, num_layers,
-                                                      field, params_ptr,
-                                                      params_size, true);
+                                                      field, view.ptr,
+                                                      view.size, true);
         },
         py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
         py::arg("params"));
@@ -176,51 +151,17 @@ PYBIND11_MODULE(_cuda_backend, m) {
            const std::string &gradient_strategy,
            bool fuse_ring_cnot_layer,
            std::size_t checkpoint_interval_ops,
-           py::array_t<double, py::array::c_style | py::array::forcecast>
-               params) {
+           FlatArray params,
+           bool measure_timings) {
             validate_params_shape(num_qubits, num_layers, params);
-            const auto buffer = params.request();
-            const auto *params_ptr = static_cast<const double *>(buffer.ptr);
-            const auto params_size = static_cast<std::size_t>(buffer.size);
+            const auto view = view_params(params);
             standalone_backend::EnergyGradResult result;
             {
                 py::gil_scoped_release release;
                 result = standalone_backend::energy_and_grad(
                     num_qubits, num_layers, field, gradient_strategy,
-                    fuse_ring_cnot_layer, params_ptr, params_size,
-                    checkpoint_interval_ops);
-            }
-
-            py::array_t<double> grad(result.gradient.size());
-            std::memcpy(grad.mutable_data(), result.gradient.data(),
-                        result.gradient.size() * sizeof(double));
-            return py::make_tuple(result.energy, grad);
-        },
-        py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
-        py::arg("gradient_strategy") = "checkpoint",
-        py::arg("fuse_ring_cnot_layer") = true,
-        py::arg("checkpoint_interval_ops") = 0,
-        py::arg("params"));
-
-    m.def(
-        "energy_and_grad_with_timings",
-        [](std::size_t num_qubits, std::size_t num_layers, double field,
-           const std::string &gradient_strategy,
-           bool fuse_ring_cnot_layer,
-           std::size_t checkpoint_interval_ops,
-           py::array_t<double, py::array::c_style | py::array::forcecast>
-               params) {
-            validate_params_shape(num_qubits, num_layers, params);
-            const auto buffer = params.request();
-            const auto *params_ptr = static_cast<const double *>(buffer.ptr);
-            const auto params_size = static_cast<std::size_t>(buffer.size);
-            standalone_backend::EnergyGradResult result;
-            {
-                py::gil_scoped_release release;
-                result = standalone_backend::energy_and_grad(
-                    num_qubits, num_layers, field, gradient_strategy,
-                    fuse_ring_cnot_layer, params_ptr, params_size,
-                    checkpoint_interval_ops);
+                    fuse_ring_cnot_layer, view.ptr, view.size,
+                    checkpoint_interval_ops, measure_timings);
             }
             return make_energy_grad_dict(result);
         },
@@ -228,24 +169,22 @@ PYBIND11_MODULE(_cuda_backend, m) {
         py::arg("gradient_strategy") = "checkpoint",
         py::arg("fuse_ring_cnot_layer") = true,
         py::arg("checkpoint_interval_ops") = 0,
-        py::arg("params"));
+        py::arg("params"),
+        py::arg("measure_timings") = true);
 
     m.def(
         "dense_scan_experiment",
         [](std::size_t num_qubits, std::size_t num_layers, double field,
            bool fuse_ring_cnot_layer,
-           py::array_t<double, py::array::c_style | py::array::forcecast>
-               params) {
+           FlatArray params) {
             validate_params_shape(num_qubits, num_layers, params);
-            const auto buffer = params.request();
-            const auto *params_ptr = static_cast<const double *>(buffer.ptr);
-            const auto params_size = static_cast<std::size_t>(buffer.size);
+            const auto view = view_params(params);
             standalone_backend::DenseScanExperimentResult result;
             {
                 py::gil_scoped_release release;
                 result = standalone_backend::dense_scan_experiment(
                     num_qubits, num_layers, field, fuse_ring_cnot_layer,
-                    params_ptr, params_size);
+                    view.ptr, view.size);
             }
 
             py::array_t<double> grad(result.gradient.size());

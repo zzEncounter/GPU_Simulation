@@ -11,7 +11,10 @@
 
 ## 目录结构
 
-- `ring_ising/`：前端 Python 包，包含 baseline workflow、CLI、模型构件，以及拆分后的 `runtime/device|telemetry|timing` 辅助层。
+- `ring_ising/workflows/`：两条主工作流实现（`pennylane.py` 与 `standalone.py`）。
+- `ring_ising/training/`：共享训练循环与统一返回结果模型。
+- `ring_ising/baseline/` 与 `standalone_backend/workflow.py`：兼容层（旧导入路径仍可用）。
+- `ring_ising/`：其余前端 Python 包内容（CLI、模型构件、runtime 辅助层）。
 - `run_pennylane_baseline.py`：PennyLane 基线路径入口兼容包装。
 - `run_standalone_backend.py`：Standalone CUDA 路径入口兼容包装。
 - `standalone_backend/`：Python 侧 runtime。
@@ -87,12 +90,29 @@ python -m venv .venv
 
 # 关闭 gate fusion 做对照
 .venv/bin/python run_standalone_backend.py --disable-gate-fusion
+
+# 关闭 standalone 后端内部细粒度计时（仅保留训练循环总时间）
+.venv/bin/python run_standalone_backend.py --disable-backend-timings
+```
+
+## 函数调用接口
+
+两条路径都支持直接函数调用，并返回统一风格的结构化结果（最终能量、训练循环时间、step 指标、可选 GPU 遥测，standalone 还可包含后端细粒度计时）：
+
+```python
+from ring_ising.baseline import BaselineConfig, run_baseline
+from standalone_backend import StandaloneRunConfig, run_standalone
+
+baseline_result = run_baseline(BaselineConfig(num_qubits=12, layers=3, steps=20))
+standalone_result = run_standalone(
+    StandaloneRunConfig(num_qubits=12, layers=3, steps=20, measure_backend_timings=True)
+)
 ```
 
 ## 测试
 
 ```bash
-.venv/bin/python -m unittest tests.test_backends_parity -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
 ## Benchmark

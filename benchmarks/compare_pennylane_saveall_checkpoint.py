@@ -170,7 +170,6 @@ def _build_reference(case: BenchmarkCase, field: float, seed: int, init_scale: f
             num_qubits=case.num_qubits,
             layers=case.layers,
             field=field,
-            warmup=0,
             steps=0,
             device="gpu",
         )
@@ -197,7 +196,6 @@ def _benchmark_pennylane(
             num_qubits=case.num_qubits,
             layers=case.layers,
             field=field,
-            warmup=0,
             steps=0,
             device="gpu",
         )
@@ -295,7 +293,7 @@ def _benchmark_standalone(
             if mode == "bruteforce_parallel_q6"
             else None
         )
-        timed = backend.energy_and_grad_with_timings(params_np)
+        timed = backend.energy_and_grad(params_np, return_timings=True)
         energy = float(timed["energy"])
         grad = np.asarray(timed["gradient"], dtype=np.float64)
         if ref is not None:
@@ -309,7 +307,7 @@ def _benchmark_standalone(
             grad_l2_diff = None
 
         timings = median_timing_fields(
-            lambda: backend.energy_and_grad_with_timings(params_np),
+            lambda: backend.energy_and_grad(params_np, return_timings=True),
             ("forward_ms", "back_ms", "gradient_ms", "total_ms"),
             repeats,
             warmup,

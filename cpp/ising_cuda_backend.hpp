@@ -47,7 +47,8 @@ class RingIsingCudaBackend {
         -> RingIsingCudaBackend &;
 
     auto forward_energy(const double *params, std::size_t num_params) -> double;
-    auto energy_and_grad(const double *params, std::size_t num_params)
+    auto energy_and_grad(const double *params, std::size_t num_params,
+                         bool measure_timings = true)
         -> EnergyGradResult;
     auto dense_scan_experiment(const double *params, std::size_t num_params)
         -> DenseScanExperimentResult;
@@ -66,7 +67,8 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  const std::string &gradient_strategy,
                                  bool fuse_ring_cnot_layer,
                                  const double *params, std::size_t num_params,
-                                 std::size_t checkpoint_interval_ops);
+                                 std::size_t checkpoint_interval_ops,
+                                 bool measure_timings = true);
 
 DenseScanExperimentResult dense_scan_experiment(
     std::size_t num_qubits, std::size_t num_layers, double field,

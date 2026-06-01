@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as onp
 import pennylane as qml
 from pennylane import numpy as pnp
+
+from ring_ising.params import make_initial_params_array
 
 
 def build_ring_ising_hamiltonian(num_qubits: int, field: float) -> Any:
@@ -49,6 +50,10 @@ def make_initial_params(
     num_qubits: int, layers: int, seed: int, init_scale: float
 ) -> pnp.ndarray:
     """Create a trainable parameter tensor for the ansatz."""
-    rng = onp.random.default_rng(seed)
-    initial = init_scale * rng.standard_normal((layers, num_qubits, 2))
+    initial = make_initial_params_array(
+        num_qubits=num_qubits,
+        layers=layers,
+        seed=seed,
+        init_scale=init_scale,
+    )
     return pnp.array(initial, requires_grad=True)

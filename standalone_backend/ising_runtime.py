@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from ring_ising.params import make_initial_params_array
+
 from .config import RingIsingConfig, StrategyResolution
 from .strategy import resolve_strategy
 
@@ -19,10 +21,13 @@ else:
 def make_initial_params(
     num_qubits: int, layers: int, seed: int = 7, init_scale: float = 0.3
 ) -> np.ndarray:
-    """Create trainable parameters matching the original PennyLane demo."""
-
-    rng = np.random.default_rng(seed)
-    return init_scale * rng.standard_normal((layers, num_qubits, 2))
+    """Create trainable parameters matching the ring ansatz shape."""
+    return make_initial_params_array(
+        num_qubits=num_qubits,
+        layers=layers,
+        seed=seed,
+        init_scale=init_scale,
+    )
 
 
 class RingIsingAdjointBackend:
@@ -70,19 +75,18 @@ class RingIsingAdjointBackend:
         flat = self._normalize_params(params)
         return float(self._cuda.forward_energy(flat))
 
-    def energy_and_grad(self, params: np.ndarray) -> tuple[float, np.ndarray]:
-        """Evaluate the Ising energy and its reverse-mode gradient."""
+    def energy_and_grad(
+        self,
+        params: np.ndarray,
+        *,
+        measure_timings: bool = True,
+        return_timings: bool = False,
+    ) -> tuple[float, np.ndarray] | dict[str, np.ndarray | float]:
+        """Evaluate the Ising energy and gradient, optionally returning timings."""
 
         flat = self._normalize_params(params)
-        energy, grad = self._cuda.energy_and_grad(flat)
-        return float(energy), np.asarray(grad, dtype=np.float64).reshape(self.config.param_shape)
-
-    def energy_and_grad_with_timings(self, params: np.ndarray) -> dict[str, np.ndarray | float]:
-        """Evaluate energy/gradient and return backend phase timings."""
-
-        flat = self._normalize_params(params)
-        raw = self._cuda.energy_and_grad_with_timings(flat)
-        return {
+        raw = self._cuda.energy_and_grad(flat, measure_timings)
+        parsed = {
             "energy": float(raw["energy"]),
             "gradient": np.asarray(raw["gradient"], dtype=np.float64).reshape(
                 self.config.param_shape
@@ -92,6 +96,9 @@ class RingIsingAdjointBackend:
             "gradient_ms": float(raw["gradient_ms"]),
             "total_ms": float(raw["total_ms"]),
         }
+        if return_timings:
+            return parsed
+        return float(parsed["energy"]), parsed["gradient"]
 
     def dense_scan_experiment(self, params: np.ndarray) -> dict[str, np.ndarray | float]:
         """Run the q<=6 brute-force dense scan experiment and return diagnostics."""

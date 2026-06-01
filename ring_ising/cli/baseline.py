@@ -33,8 +33,6 @@ def parse_args() -> argparse.Namespace:
         seed_default=DEFAULT_BASELINE_CONFIG.seed,
         init_scale_default=DEFAULT_BASELINE_CONFIG.init_scale,
         report_every_default=DEFAULT_BASELINE_CONFIG.report_every,
-        include_warmup=True,
-        warmup_default=DEFAULT_BASELINE_CONFIG.warmup,
     )
     add_device_arg(parser, default=DEFAULT_BASELINE_CONFIG.device)
     add_telemetry_args(
