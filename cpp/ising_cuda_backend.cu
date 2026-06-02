@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -20,11 +19,6 @@ namespace {
 
 using detail::Complex;
 template <typename T> using DeviceBuffer = detail::DeviceBuffer<T>;
-
-auto elapsed_ms(std::chrono::steady_clock::time_point start,
-                std::chrono::steady_clock::time_point end) -> double {
-    return std::chrono::duration<double, std::milli>(end - start).count();
-}
 
 enum class OpKind { RY, RZ, CNOT, FusedRYRZ, RingCNOTLayer };
 enum class GradientStrategy {
@@ -263,34 +257,21 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<Complex> dense_hamiltonian;
     DeviceBuffer<int> dense_param_gate_indices;
     DeviceBuffer<Complex> dense_prefix_scan;
-    DeviceBuffer<Complex> dense_tmp_level;
-    DeviceBuffer<Complex> dense_left_tmp;
-    DeviceBuffer<int> dense_left_indices;
-    DeviceBuffer<int> dense_right_indices;
-    DeviceBuffer<const Complex *> dense_ptr_a;
-    DeviceBuffer<const Complex *> dense_ptr_b;
-    DeviceBuffer<Complex *> dense_ptr_c;
     DeviceBuffer<Complex> dense_ones_vector;
     DeviceBuffer<Complex> dense_psi_before;
     DeviceBuffer<Complex> dense_psi_after;
     DeviceBuffer<Complex> dense_forward_states;
+    DeviceBuffer<Complex> dense_total_matrix;
     DeviceBuffer<Complex> dense_lambda_k;
-    DeviceBuffer<Complex> dense_lambda_by_op;
+    DeviceBuffer<Complex> dense_eta_vector;
+    DeviceBuffer<Complex> dense_eta_before;
     DeviceBuffer<Complex> dense_suffix_scan;
-    DeviceBuffer<Complex> dense_lambda_for_params;
-    DeviceBuffer<Complex> dense_psi_before_for_params;
-    DeviceBuffer<Complex> dense_deriv_states;
     DeviceBuffer<double> dense_gradients;
-    DeviceBuffer<int> dense_reverse_index;
-    DeviceBuffer<Complex> dense_reversed_tmp;
-    DeviceBuffer<Complex> dense_suffix_for_ops;
     DenseGateStorage dense_storage_cache;
     std::vector<std::size_t> dense_param_op_indices;
     std::vector<Complex> dense_hamiltonian_host;
     std::vector<Complex> dense_psi0_host;
-    std::vector<int> dense_reverse_index_host;
     bool dense_static_device_uploaded{false};
-    bool dense_reverse_indices_uploaded{false};
 
     Impl(std::size_t num_qubits_, std::size_t num_layers_, double field_,
          const std::string &gradient_strategy_,
@@ -313,10 +294,9 @@ struct RingIsingCudaBackend::Impl {
             strategy = GradientStrategy::SaveParamStates;
         }
 
-        if (strategy == GradientStrategy::DenseScan ||
-            strategy == GradientStrategy::SaveParamStates) {
+        if (strategy == GradientStrategy::SaveParamStates) {
             save_param_states.allocate((expected_params / 2) * state_size);
-        } else {
+        } else if (strategy == GradientStrategy::Checkpoint) {
             num_chunks = (num_ops + checkpoint_interval_ops - 1) /
                          checkpoint_interval_ops;
             checkpoints.allocate((num_chunks + 1) * state_size);
@@ -324,14 +304,9 @@ struct RingIsingCudaBackend::Impl {
         }
     }
 };
-
-auto run_dense_scan_experiment(RingIsingCudaBackend::Impl &impl,
-                               const double *params, std::size_t num_params)
-    -> DenseScanExperimentResult;
 auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
                                          const double *params,
-                                         std::size_t num_params,
-                                         bool measure_timings)
+                                         std::size_t num_params)
     -> EnergyGradResult;
 
 
@@ -360,17 +335,10 @@ auto RingIsingCudaBackend::operator=(RingIsingCudaBackend &&) noexcept
 
 auto RingIsingCudaBackend::energy_and_grad(const double *params,
                                            std::size_t num_params,
-                                           bool measure_timings,
                                            bool compute_gradient)
     -> EnergyGradResult {
     return run_energy_and_grad_checkpointed(*impl_, params, num_params,
-                                            measure_timings, compute_gradient);
-}
-
-auto RingIsingCudaBackend::dense_scan_experiment(const double *params,
-                                                 std::size_t num_params)
-    -> DenseScanExperimentResult {
-    return run_dense_scan_experiment(*impl_, params, num_params);
+                                            compute_gradient);
 }
 
 EnergyGradResult energy_and_grad(std::size_t num_qubits,
@@ -379,23 +347,12 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  bool fuse_ring_cnot_layer,
                                  const double *params, std::size_t num_params,
                                  std::size_t checkpoint_interval_ops,
-                                 bool measure_timings,
                                  bool compute_gradient) {
     RingIsingCudaBackend backend(num_qubits, num_layers, field,
                                  gradient_strategy,
                                  fuse_ring_cnot_layer,
                                  checkpoint_interval_ops);
-    return backend.energy_and_grad(params, num_params, measure_timings,
-                                   compute_gradient);
-}
-
-DenseScanExperimentResult dense_scan_experiment(
-    std::size_t num_qubits, std::size_t num_layers, double field,
-    bool fuse_ring_cnot_layer, const double *params, std::size_t num_params) {
-    RingIsingCudaBackend backend(num_qubits, num_layers, field,
-                                 "dense_scan",
-                                 fuse_ring_cnot_layer, 0);
-    return backend.dense_scan_experiment(params, num_params);
+    return backend.energy_and_grad(params, num_params, compute_gradient);
 }
 
 } // namespace standalone_backend

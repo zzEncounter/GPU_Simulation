@@ -107,39 +107,40 @@ class StandaloneBackendParityTest(unittest.TestCase):
         np.testing.assert_allclose(auto_grad, explicit_grad, atol=1e-8, rtol=1e-8)
 
     def test_dense_scan_matches_save_param_states(self) -> None:
-        num_qubits = 5
-        layers = 2
-        field = 0.9
-        rng = np.random.default_rng(2026)
-        params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
+        for num_qubits, layers, field, seed in (
+            (5, 2, 0.9, 2026),
+            (6, 2, 1.1, 2027),
+        ):
+            with self.subTest(num_qubits=num_qubits, layers=layers):
+                rng = np.random.default_rng(seed)
+                params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
 
-        reference_backend = RingIsingAdjointBackend(
-            RingIsingConfig(
-                num_qubits=num_qubits,
-                layers=layers,
-                field=field,
-                gradient_strategy="save_param_states",
-            )
-        )
-        brute_backend = RingIsingAdjointBackend(
-            RingIsingConfig(
-                num_qubits=num_qubits,
-                layers=layers,
-                field=field,
-                gradient_strategy="dense_scan",
-            )
-        )
+                reference_backend = RingIsingAdjointBackend(
+                    RingIsingConfig(
+                        num_qubits=num_qubits,
+                        layers=layers,
+                        field=field,
+                        gradient_strategy="save_param_states",
+                    )
+                )
+                dense_backend = RingIsingAdjointBackend(
+                    RingIsingConfig(
+                        num_qubits=num_qubits,
+                        layers=layers,
+                        field=field,
+                        gradient_strategy="dense_scan",
+                    )
+                )
 
-        ref_energy, ref_grad = reference_backend.energy_and_grad(params)
-        brute_energy, brute_grad = brute_backend.energy_and_grad(params)
-        np.testing.assert_allclose(brute_energy, ref_energy, atol=1e-8, rtol=1e-8)
-        np.testing.assert_allclose(brute_grad, ref_grad, atol=1e-7, rtol=1e-7)
+                ref_energy, ref_grad = reference_backend.energy_and_grad(params)
+                dense_energy, dense_grad = dense_backend.energy_and_grad(params)
+                np.testing.assert_allclose(
+                    dense_energy, ref_energy, atol=1e-8, rtol=1e-8
+                )
+                np.testing.assert_allclose(
+                    dense_grad, ref_grad, atol=1e-7, rtol=1e-7
+                )
 
-        diag = brute_backend.dense_scan_experiment(params)
-        self.assertIn("forward_states_ri", diag)
-        self.assertIn("backward_states_ri", diag)
-        self.assertGreater(diag["cpu_reference_ms"], 0.0)
-        self.assertGreater(diag["gpu_scan_ms"], 0.0)
 
 
 if __name__ == "__main__":

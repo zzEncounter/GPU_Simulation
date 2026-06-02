@@ -73,54 +73,14 @@ class RingIsingAdjointBackend:
         """Evaluate the Ising energy using the custom CUDA backend."""
 
         flat = self._normalize_params(params)
-        raw = self._cuda.energy_and_grad(
-            flat,
-            False,
-            False,
-        )
+        raw = self._cuda.energy_and_grad(flat, False)
         return float(raw["energy"])
 
-    def energy_and_grad(
-        self,
-        params: np.ndarray,
-        *,
-        measure_timings: bool = True,
-        return_timings: bool = False,
-    ) -> tuple[float, np.ndarray] | dict[str, np.ndarray | float]:
-        """Evaluate the Ising energy and gradient, optionally returning timings."""
+    def energy_and_grad(self, params: np.ndarray) -> tuple[float, np.ndarray]:
+        """Evaluate the Ising energy and gradient."""
 
         flat = self._normalize_params(params)
-        raw = self._cuda.energy_and_grad(flat, measure_timings)
-        parsed = {
-            "energy": float(raw["energy"]),
-            "gradient": np.asarray(raw["gradient"], dtype=np.float64).reshape(
-                self.config.param_shape
-            ),
-            "forward_ms": float(raw["forward_ms"]),
-            "back_ms": float(raw["back_ms"]),
-            "gradient_ms": float(raw["gradient_ms"]),
-            "total_ms": float(raw["total_ms"]),
-            "prep_ms": float(raw.get("prep_ms", 0.0)),
-            "gpu_pipeline_ms": float(raw.get("gpu_pipeline_ms", float(raw["total_ms"]))),
-            "e2e_total_ms": float(raw.get("e2e_total_ms", float(raw["total_ms"]))),
-        }
-        if return_timings:
-            return parsed
-        return float(parsed["energy"]), parsed["gradient"]
-
-    def dense_scan_experiment(self, params: np.ndarray) -> dict[str, np.ndarray | float]:
-        """Run the q<=6 brute-force dense scan experiment and return diagnostics."""
-
-        flat = self._normalize_params(params)
-        raw = self._cuda.dense_scan_experiment(flat)
-        return {
-            "energy": float(raw["energy"]),
-            "gradient": np.asarray(raw["gradient"], dtype=np.float64).reshape(
-                self.config.param_shape
-            ),
-            "forward_states_ri": np.asarray(raw["forward_states_ri"], dtype=np.float64),
-            "backward_states_ri": np.asarray(raw["backward_states_ri"], dtype=np.float64),
-            "cpu_reference_ms": float(raw["cpu_reference_ms"]),
-            "gpu_scan_ms": float(raw["gpu_scan_ms"]),
-            "sequential_statevector_ms": float(raw["sequential_statevector_ms"]),
-        }
+        raw = self._cuda.energy_and_grad(flat)
+        return float(raw["energy"]), np.asarray(
+            raw["gradient"], dtype=np.float64
+        ).reshape(self.config.param_shape)

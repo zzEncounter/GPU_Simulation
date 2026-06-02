@@ -22,12 +22,6 @@ class LoopTimingBreakdown:
     gradient_wall_s: float
     final_readout_s: float
     total_compute_s: float
-    backend_forward_ms: float | None = None
-    backend_back_ms: float | None = None
-    backend_gradient_ms: float | None = None
-    backend_total_ms: float | None = None
-    backend_prep_ms: float | None = None
-    backend_gpu_pipeline_ms: float | None = None
 
 
 @dataclass

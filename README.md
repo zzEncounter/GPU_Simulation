@@ -19,8 +19,7 @@
 - `run_standalone_backend.py`：Standalone CUDA 路径入口兼容包装。
 - `standalone_backend/`：Python 侧 runtime。
 - `cpp/`：C++/CUDA 扩展实现。
-- `benchmarks/compare_pennylane_saveall_checkpoint.py`：PennyLane 与 standalone 策略对比脚本。
-- `benchmarks/compare_save_vs_dense_scan.py`：`save_param_states` 与 `dense_scan` 专项对比脚本（含时间拆解与 GPU 遥测）。
+- `benchmarks/compare_modes.py`：多模式统一对比脚本（当前聚焦训练循环总时间与最终能量差）。
 - `tests/test_backends_parity.py`：数值一致性测试。
 - `old/`：历史归档（已从版本控制排除）。
 
@@ -91,22 +90,18 @@ python -m venv .venv
 # 关闭 gate fusion 做对照
 .venv/bin/python run_standalone_backend.py --disable-gate-fusion
 
-# 关闭 standalone 后端内部细粒度计时（仅保留训练循环总时间）
-.venv/bin/python run_standalone_backend.py --disable-backend-timings
 ```
 
 ## 函数调用接口
 
-两条路径都支持直接函数调用，并返回统一风格的结构化结果（最终能量、训练循环时间、step 指标、可选 GPU 遥测，standalone 还可包含后端细粒度计时）：
+两条路径都支持直接函数调用，并返回统一风格的结构化结果（最终能量、训练循环时间、step 指标、可选 GPU 遥测）：
 
 ```python
 from ring_ising.baseline import BaselineConfig, run_baseline
 from standalone_backend import StandaloneRunConfig, run_standalone
 
 baseline_result = run_baseline(BaselineConfig(num_qubits=12, layers=3, steps=20))
-standalone_result = run_standalone(
-    StandaloneRunConfig(num_qubits=12, layers=3, steps=20, measure_backend_timings=True)
-)
+standalone_result = run_standalone(StandaloneRunConfig(num_qubits=12, layers=3, steps=20))
 ```
 
 ## 测试
@@ -118,25 +113,10 @@ standalone_result = run_standalone(
 ## Benchmark
 
 ```bash
-.venv/bin/python benchmarks/compare_pennylane_saveall_checkpoint.py \
-  --cases 20x4 \
-  --standalone-modes save_param_states checkpoint auto dense_scan
+.venv/bin/python benchmarks/compare_modes.py \
+  --cases 4x8 5x32 6x128 \
+  --modes save_param_states checkpoint dense_scan \
+  --reference-mode save_param_states
 ```
 
-`dense_scan` 仅适用于 `--cases` 中 `qubits <= 6` 的条目。
-
-可选：
-
-```bash
-.venv/bin/python benchmarks/compare_pennylane_saveall_checkpoint.py \
-  --cases 20x4 \
-  --standalone-modes save_param_states checkpoint \
-  --disable-gate-fusion
-```
-
-专项对比（仅 `save_param_states` vs `dense_scan`）：
-
-```bash
-.venv/bin/python benchmarks/compare_save_vs_dense_scan.py \
-  --cases 5x8 6x8
-```
+`dense_scan` 仅适用于 `qubits <= 6` 的条目。

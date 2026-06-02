@@ -76,14 +76,8 @@ class RingIsingConfig:
         if strategy == "save_param_states":
             return self.num_parametric_gates + 3
         if strategy == "dense_scan":
-            # matrix batches: gate mats + dgate mats + prefix/suffix scan work buffers.
             padded = 1 << (self.num_ops - 1).bit_length() if self.num_ops > 0 else 1
-            return (
-                self.num_ops  # gate mats
-                + self.num_params  # derivative mats
-                + 2 * padded  # prefix/suffix scan buffers
-                + padded  # temporary scan buffers
-            )
+            return 3 * padded + max(self.num_ops + 1, padded) + 3
         if strategy != "checkpoint":
             raise ValueError(
                 "strategy must be 'save_param_states', 'checkpoint', "
@@ -108,20 +102,19 @@ class RingIsingConfig:
             matrix_count = (
                 self.num_ops  # gate mats
                 + self.num_params  # derivative mats
-                + 2 * padded  # prefix/suffix
-                + padded  # scan temp
-                + 2 * self.num_ops  # suffix helper buffers
-                + 1  # hamiltonian
+                + padded  # tree leaves
+                + max(0, padded - 1)  # tree internal nodes
+                + 2  # hamiltonian + total matrix
             )
             vector_count = (
-                (self.num_ops + 1)  # forward states
-                + 4 * self.num_ops  # psi_before/after + lambda states
-                + 3 * self.num_params  # param gather + deriv
-                + 2  # psi0 + lambda_k
+                3 * padded  # psi_before/after + eta_before
+                + max(self.num_ops + 1, padded)  # forward state / downsweep scratch
+                + 3  # psi0 + lambda_k + eta
             )
             bytes_total = (
                 matrix_count * self.dense_matrix_nbytes
                 + vector_count * self.statevector_nbytes
+                + self.num_params * (8 + 4)  # gradients + param_gate_indices
             )
             return bytes_total / (1024**3)
         return (

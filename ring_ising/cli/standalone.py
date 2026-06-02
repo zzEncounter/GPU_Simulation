@@ -47,13 +47,6 @@ def parse_args() -> argparse.Namespace:
         help="Disable gate fusion optimizations for A/B comparisons.",
     )
     parser.add_argument(
-        "--disable-backend-timings",
-        dest="measure_backend_timings",
-        action="store_false",
-        default=DEFAULT_STANDALONE_CONFIG.measure_backend_timings,
-        help="Disable standalone backend fine-grained timing collection inside energy_and_grad.",
-    )
-    parser.add_argument(
         "--auto-memory-budget-frac",
         dest="auto_memory_budget_fraction",
         type=float,

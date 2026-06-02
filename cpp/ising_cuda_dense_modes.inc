@@ -1,17 +1,9 @@
-auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
-                                 const DenseGateStorage &storage,
-                                 bool copy_states_to_host)
-    -> DenseScanGpuRunResult {
+void ensure_dense_scan_buffers(RingIsingCudaBackend::Impl &impl,
+                               const DenseGateStorage &storage) {
     const auto num_ops = storage.ops.size();
     const auto dim = impl.state_size;
     const auto mat_elements = dim * dim;
     const auto padded = next_power_of_two(num_ops);
-    const auto num_params_local = impl.expected_params;
-
-    if (!impl.dense_cublas) {
-        impl.dense_cublas = std::make_unique<CublasHandle>();
-    }
-    auto &cublas = *impl.dense_cublas;
 
     auto ensure_alloc = [](auto &buffer, std::size_t required_size) -> bool {
         if (buffer.size() == required_size) {
@@ -28,76 +20,42 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     const bool param_indices_reallocated =
         ensure_alloc(impl.dense_param_gate_indices,
                      storage.param_gate_indices.size());
-    ensure_alloc(impl.dense_prefix_scan, padded * mat_elements);
-    ensure_alloc(impl.dense_tmp_level, (padded / 2) * mat_elements);
-    ensure_alloc(impl.dense_left_tmp, (padded / 2) * mat_elements);
-    ensure_alloc(impl.dense_left_indices, padded / 2);
-    ensure_alloc(impl.dense_right_indices, padded / 2);
-    ensure_alloc(impl.dense_ptr_a, padded / 2);
-    ensure_alloc(impl.dense_ptr_b, padded / 2);
-    ensure_alloc(impl.dense_ptr_c, padded / 2);
     const bool psi0_reallocated = ensure_alloc(impl.dense_ones_vector, dim);
-    ensure_alloc(impl.dense_psi_before, num_ops * dim);
-    ensure_alloc(impl.dense_psi_after, num_ops * dim);
-    ensure_alloc(impl.dense_forward_states, (num_ops + 1) * dim);
+    ensure_alloc(impl.dense_prefix_scan, padded * mat_elements);
+    ensure_alloc(impl.dense_suffix_scan, padded > 1 ? (padded - 1) * mat_elements : 0);
+    ensure_alloc(impl.dense_psi_before, padded * dim);
+    ensure_alloc(impl.dense_psi_after, padded * dim);
+    ensure_alloc(impl.dense_forward_states, std::max(num_ops + 1, padded) * dim);
+    ensure_alloc(impl.dense_total_matrix, mat_elements);
     ensure_alloc(impl.dense_lambda_k, dim);
-    ensure_alloc(impl.dense_lambda_by_op, num_ops * dim);
-    ensure_alloc(impl.dense_suffix_scan, padded * mat_elements);
-    ensure_alloc(impl.dense_lambda_for_params, num_params_local * dim);
-    ensure_alloc(impl.dense_psi_before_for_params, num_params_local * dim);
-    ensure_alloc(impl.dense_deriv_states, num_params_local * dim);
-    ensure_alloc(impl.dense_gradients, num_params_local);
-    const bool reverse_index_reallocated =
-        ensure_alloc(impl.dense_reverse_index, num_ops);
-    ensure_alloc(impl.dense_reversed_tmp, num_ops * mat_elements);
-    ensure_alloc(impl.dense_suffix_for_ops, num_ops * mat_elements);
+    ensure_alloc(impl.dense_eta_vector, dim);
+    ensure_alloc(impl.dense_eta_before, padded * dim);
+    ensure_alloc(impl.dense_gradients, impl.expected_params);
 
-    if (hamiltonian_reallocated || param_indices_reallocated ||
-        psi0_reallocated) {
+    if (hamiltonian_reallocated || param_indices_reallocated || psi0_reallocated) {
         impl.dense_static_device_uploaded = false;
     }
-    if (reverse_index_reallocated) {
-        impl.dense_reverse_indices_uploaded = false;
-    }
+}
 
-    auto &gate_mats_dev = impl.dense_gate_mats;
-    auto &dgate_mats_dev = impl.dense_dgate_mats;
-    auto &hamiltonian_dev = impl.dense_hamiltonian;
-    auto &param_gate_indices_dev = impl.dense_param_gate_indices;
-    auto &prefix_scan_dev = impl.dense_prefix_scan;
-    auto &tmp_level_dev = impl.dense_tmp_level;
-    auto &left_tmp_dev = impl.dense_left_tmp;
-    auto &left_indices_dev = impl.dense_left_indices;
-    auto &right_indices_dev = impl.dense_right_indices;
-    auto &ptr_a_dev = impl.dense_ptr_a;
-    auto &ptr_b_dev = impl.dense_ptr_b;
-    auto &ptr_c_dev = impl.dense_ptr_c;
-    auto &ones_vector_dev = impl.dense_ones_vector;
-    auto &psi_before_dev = impl.dense_psi_before;
-    auto &psi_after_dev = impl.dense_psi_after;
-    auto &forward_states_dev = impl.dense_forward_states;
-    auto &lambda_k_dev = impl.dense_lambda_k;
-    auto &lambda_by_op_dev = impl.dense_lambda_by_op;
-    auto &suffix_scan_dev = impl.dense_suffix_scan;
-    auto &lambda_for_params_dev = impl.dense_lambda_for_params;
-    auto &psi_before_for_params_dev = impl.dense_psi_before_for_params;
-    auto &deriv_states_dev = impl.dense_deriv_states;
-    auto &gradients_dev = impl.dense_gradients;
-    auto &reverse_index_dev = impl.dense_reverse_index;
-    auto &reversed_tmp_dev = impl.dense_reversed_tmp;
-    auto &suffix_for_ops_dev = impl.dense_suffix_for_ops;
+void upload_dense_scan_inputs(RingIsingCudaBackend::Impl &impl,
+                              const DenseGateStorage &storage) {
+    const auto dim = impl.state_size;
+    const auto mat_elements = dim * dim;
 
-    detail::check_cuda(cudaMemcpyAsync(gate_mats_dev.get(), storage.gate_mats.data(),
+    detail::check_cuda(cudaMemcpyAsync(impl.dense_gate_mats.get(),
+                                       storage.gate_mats.data(),
                                        sizeof(Complex) * storage.gate_mats.size(),
                                        cudaMemcpyHostToDevice, 0),
                        "copy gate mats");
-    detail::check_cuda(cudaMemcpyAsync(dgate_mats_dev.get(), storage.dgate_mats.data(),
-                                       sizeof(Complex) * storage.dgate_mats.size(),
-                                       cudaMemcpyHostToDevice, 0),
+    detail::check_cuda(cudaMemcpyAsync(
+                           impl.dense_dgate_mats.get(), storage.dgate_mats.data(),
+                           sizeof(Complex) * storage.dgate_mats.size(),
+                           cudaMemcpyHostToDevice, 0),
                        "copy derivative mats");
+
     if (!impl.dense_static_device_uploaded) {
         detail::check_cuda(
-            cudaMemcpyAsync(param_gate_indices_dev.get(),
+            cudaMemcpyAsync(impl.dense_param_gate_indices.get(),
                             storage.param_gate_indices.data(),
                             sizeof(int) * storage.param_gate_indices.size(),
                             cudaMemcpyHostToDevice, 0),
@@ -110,10 +68,11 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
                                            impl.num_qubits, impl.field);
     }
     if (!impl.dense_static_device_uploaded) {
-        detail::check_cuda(cudaMemcpyAsync(hamiltonian_dev.get(),
-                                           impl.dense_hamiltonian_host.data(),
-                                           sizeof(Complex) * mat_elements,
-                                           cudaMemcpyHostToDevice, 0),
+        detail::check_cuda(cudaMemcpyAsync(
+                               impl.dense_hamiltonian.get(),
+                               impl.dense_hamiltonian_host.data(),
+                               sizeof(Complex) * mat_elements,
+                               cudaMemcpyHostToDevice, 0),
                            "copy hamiltonian");
     }
 
@@ -122,29 +81,108 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
         impl.dense_psi0_host[0] = Complex(1.0, 0.0);
     }
     if (!impl.dense_static_device_uploaded) {
-        detail::check_cuda(cudaMemcpyAsync(ones_vector_dev.get(),
+        detail::check_cuda(cudaMemcpyAsync(impl.dense_ones_vector.get(),
                                            impl.dense_psi0_host.data(),
                                            sizeof(Complex) * dim,
                                            cudaMemcpyHostToDevice, 0),
                            "copy psi0");
         impl.dense_static_device_uploaded = true;
     }
+}
 
-    const auto gpu_start = std::chrono::steady_clock::now();
-    const auto forward_start = gpu_start;
+void build_dense_product_tree(RingIsingCudaBackend::Impl &impl,
+                              std::size_t num_ops, std::size_t dim) {
+    const auto mat_elements = dim * dim;
+    const auto padded = next_power_of_two(num_ops);
+    auto &cublas = *impl.dense_cublas;
+    auto &leaf_storage_dev = impl.dense_prefix_scan;
+    auto &internal_storage_dev = impl.dense_suffix_scan;
+    auto &gate_mats_dev = impl.dense_gate_mats;
 
-    detail::launch_fill_identity_matrices(prefix_scan_dev.get(), padded, dim);
-    detail::check_cuda(
-        cudaMemcpyAsync(prefix_scan_dev.get(), gate_mats_dev.get(),
-                        sizeof(Complex) * num_ops * mat_elements,
-                        cudaMemcpyDeviceToDevice, 0),
-        "copy gate mats to scan buffer");
-    run_noncommutative_exclusive_scan_mats(
-        cublas.handle, prefix_scan_dev.get(), num_ops, dim, tmp_level_dev,
-        left_tmp_dev, left_indices_dev, right_indices_dev, ptr_a_dev, ptr_b_dev,
-        ptr_c_dev);
+    detail::launch_fill_identity_matrices(leaf_storage_dev.get(), padded, dim);
+    if (num_ops > 0) {
+        detail::check_cuda(
+            cudaMemcpyAsync(leaf_storage_dev.get(), gate_mats_dev.get(),
+                            sizeof(Complex) * num_ops * mat_elements,
+                            cudaMemcpyDeviceToDevice, 0),
+            "copy gate mats to tree leaves");
+    }
 
-    {
+    std::size_t current_count = padded;
+    std::size_t write_offset = 0;
+    Complex *current_level = leaf_storage_dev.get();
+    while (current_count > 1) {
+        const auto parent_count = current_count / 2;
+        const Complex alpha(1.0, 0.0);
+        const Complex beta(0.0, 0.0);
+        Complex *parent_level =
+            internal_storage_dev.get() + write_offset * mat_elements;
+        detail::check_cublas(
+            cublasZgemmStridedBatched(
+                cublas.handle, CUBLAS_OP_N, CUBLAS_OP_N, to_int(dim, "dim"),
+                to_int(dim, "dim"), to_int(dim, "dim"),
+                reinterpret_cast<const cuDoubleComplex *>(&alpha),
+                reinterpret_cast<const cuDoubleComplex *>(current_level + mat_elements),
+                to_int(dim, "dim"),
+                static_cast<long long>(2 * mat_elements),
+                reinterpret_cast<const cuDoubleComplex *>(current_level),
+                to_int(dim, "dim"),
+                static_cast<long long>(2 * mat_elements),
+                reinterpret_cast<const cuDoubleComplex *>(&beta),
+                reinterpret_cast<cuDoubleComplex *>(parent_level),
+                to_int(dim, "dim"), static_cast<long long>(mat_elements),
+                to_int(parent_count, "parent_count")),
+            "dense product tree up-sweep");
+        current_level = parent_level;
+        current_count = parent_count;
+        write_offset += parent_count;
+    }
+}
+
+auto product_tree_level_ptr(RingIsingCudaBackend::Impl &impl, std::size_t padded,
+                            std::size_t level_count) -> Complex * {
+    if (level_count == padded) {
+        return impl.dense_prefix_scan.get();
+    }
+    return impl.dense_suffix_scan.get() + (padded - 2 * level_count) *
+                                              (impl.state_size * impl.state_size);
+}
+
+void run_dense_vector_downsweep(RingIsingCudaBackend::Impl &impl,
+                                std::size_t num_ops, std::size_t dim) {
+    const auto padded = next_power_of_two(num_ops);
+    const auto mat_elements = dim * dim;
+    auto &cublas = *impl.dense_cublas;
+    auto &ones_vector_dev = impl.dense_ones_vector;
+    auto &eta_dev = impl.dense_eta_vector;
+    auto &x_current_dev = impl.dense_psi_before;
+    auto &x_next_dev = impl.dense_psi_after;
+    auto &y_current_dev = impl.dense_eta_before;
+    auto &y_next_dev = impl.dense_forward_states;
+
+    detail::check_cuda(cudaMemcpyAsync(x_current_dev.get(), ones_vector_dev.get(),
+                                       sizeof(Complex) * dim,
+                                       cudaMemcpyDeviceToDevice, 0),
+                       "seed x root");
+    detail::check_cuda(cudaMemcpyAsync(y_current_dev.get(), eta_dev.get(),
+                                       sizeof(Complex) * dim,
+                                       cudaMemcpyDeviceToDevice, 0),
+                       "seed y root");
+
+    std::size_t current_count = 1;
+    Complex *x_current = x_current_dev.get();
+    Complex *x_next = x_next_dev.get();
+    Complex *y_current = y_current_dev.get();
+    Complex *y_next = y_next_dev.get();
+
+    while (current_count < padded) {
+        const auto child_count = current_count * 2;
+        Complex *left_products = product_tree_level_ptr(impl, padded, child_count);
+        detail::launch_scatter_parent_vectors(x_current, x_next, current_count,
+                                              dim);
+        detail::launch_scatter_parent_vectors(y_current, y_next, current_count,
+                                              dim);
+
         const Complex alpha(1.0, 0.0);
         const Complex beta(0.0, 0.0);
         detail::check_cublas(
@@ -152,41 +190,86 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
                 cublas.handle, CUBLAS_OP_N, CUBLAS_OP_N, to_int(dim, "dim"), 1,
                 to_int(dim, "dim"),
                 reinterpret_cast<const cuDoubleComplex *>(&alpha),
-                reinterpret_cast<const cuDoubleComplex *>(prefix_scan_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(mat_elements),
-                reinterpret_cast<const cuDoubleComplex *>(ones_vector_dev.get()),
-                to_int(dim, "dim"), 0,
-                reinterpret_cast<const cuDoubleComplex *>(&beta),
-                reinterpret_cast<cuDoubleComplex *>(psi_before_dev.get()),
+                reinterpret_cast<const cuDoubleComplex *>(left_products),
+                to_int(dim, "dim"),
+                static_cast<long long>(2 * mat_elements),
+                reinterpret_cast<const cuDoubleComplex *>(x_current),
                 to_int(dim, "dim"), static_cast<long long>(dim),
-                to_int(num_ops, "num_ops")),
-            "prefix->psi_before gemmStridedBatched");
-
+                reinterpret_cast<const cuDoubleComplex *>(&beta),
+                reinterpret_cast<cuDoubleComplex *>(x_next + dim),
+                to_int(dim, "dim"), static_cast<long long>(2 * dim),
+                to_int(current_count, "current_count")),
+            "dense x downsweep");
         detail::check_cublas(
             cublasZgemmStridedBatched(
                 cublas.handle, CUBLAS_OP_N, CUBLAS_OP_N, to_int(dim, "dim"), 1,
                 to_int(dim, "dim"),
                 reinterpret_cast<const cuDoubleComplex *>(&alpha),
-                reinterpret_cast<const cuDoubleComplex *>(gate_mats_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(mat_elements),
-                reinterpret_cast<const cuDoubleComplex *>(psi_before_dev.get()),
+                reinterpret_cast<const cuDoubleComplex *>(left_products),
+                to_int(dim, "dim"),
+                static_cast<long long>(2 * mat_elements),
+                reinterpret_cast<const cuDoubleComplex *>(y_current),
                 to_int(dim, "dim"), static_cast<long long>(dim),
                 reinterpret_cast<const cuDoubleComplex *>(&beta),
-                reinterpret_cast<cuDoubleComplex *>(psi_after_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(dim),
-                to_int(num_ops, "num_ops")),
-            "gate*psi_before gemmStridedBatched");
+                reinterpret_cast<cuDoubleComplex *>(y_next + dim),
+                to_int(dim, "dim"), static_cast<long long>(2 * dim),
+                to_int(current_count, "current_count")),
+            "dense y downsweep");
+
+        current_count = child_count;
+        std::swap(x_current, x_next);
+        std::swap(y_current, y_next);
     }
 
-    detail::check_cuda(cudaMemcpyAsync(forward_states_dev.get(), ones_vector_dev.get(),
-                                       sizeof(Complex) * dim,
+    if (x_current != x_current_dev.get()) {
+        detail::check_cuda(
+            cudaMemcpyAsync(x_current_dev.get(), x_current,
+                            sizeof(Complex) * padded * dim,
+                            cudaMemcpyDeviceToDevice, 0),
+            "copy downsweep x leaves");
+    }
+    if (y_current != y_current_dev.get()) {
+        detail::check_cuda(
+            cudaMemcpyAsync(y_current_dev.get(), y_current,
+                            sizeof(Complex) * padded * dim,
+                            cudaMemcpyDeviceToDevice, 0),
+            "copy downsweep y leaves");
+    }
+}
+
+void run_dense_gradient_tail(RingIsingCudaBackend::Impl &impl,
+                             std::size_t num_params_local,
+                             std::size_t dim) {
+    detail::launch_fused_dense_gradient_tail(
+        impl.dense_gate_mats.get(), impl.dense_dgate_mats.get(),
+        impl.dense_param_gate_indices.get(), impl.dense_psi_before.get(),
+        impl.dense_eta_before.get(), impl.dense_gradients.get(), num_params_local,
+        dim);
+}
+
+auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
+                                 const DenseGateStorage &storage)
+    -> DenseScanGpuRunResult {
+    const auto num_ops = storage.ops.size();
+    const auto dim = impl.state_size;
+    const auto mat_elements = dim * dim;
+    const auto padded = next_power_of_two(num_ops);
+    const auto num_params_local = impl.expected_params;
+
+    if (!impl.dense_cublas) {
+        impl.dense_cublas = std::make_unique<CublasHandle>();
+    }
+    auto &cublas = *impl.dense_cublas;
+
+    ensure_dense_scan_buffers(impl, storage);
+    upload_dense_scan_inputs(impl, storage);
+
+    build_dense_product_tree(impl, num_ops, dim);
+    Complex *root_matrix = product_tree_level_ptr(impl, padded, 1);
+    detail::check_cuda(cudaMemcpyAsync(impl.dense_total_matrix.get(), root_matrix,
+                                       sizeof(Complex) * mat_elements,
                                        cudaMemcpyDeviceToDevice, 0),
-                       "copy psi0 to forward states");
-    detail::check_cuda(
-        cudaMemcpyAsync(forward_states_dev.get() + dim, psi_after_dev.get(),
-                        sizeof(Complex) * num_ops * dim, cudaMemcpyDeviceToDevice,
-                        0),
-        "copy psi_after chain");
+                       "copy tree root to total matrix");
 
     {
         const Complex alpha(1.0, 0.0);
@@ -195,165 +278,79 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
             cublasZgemm(cublas.handle, CUBLAS_OP_N, CUBLAS_OP_N, to_int(dim, "dim"),
                         1, to_int(dim, "dim"),
                         reinterpret_cast<const cuDoubleComplex *>(&alpha),
-                        reinterpret_cast<const cuDoubleComplex *>(hamiltonian_dev.get()),
+                        reinterpret_cast<const cuDoubleComplex *>(
+                            impl.dense_total_matrix.get()),
                         to_int(dim, "dim"),
                         reinterpret_cast<const cuDoubleComplex *>(
-                            forward_states_dev.get() + num_ops * dim),
+                            impl.dense_ones_vector.get()),
                         to_int(dim, "dim"),
                         reinterpret_cast<const cuDoubleComplex *>(&beta),
-                        reinterpret_cast<cuDoubleComplex *>(lambda_k_dev.get()),
+                        reinterpret_cast<cuDoubleComplex *>(
+                            impl.dense_forward_states.get() + num_ops * dim),
                         to_int(dim, "dim")),
-            "hamiltonian * psi_k");
+            "tree psi_final = T * psi0");
+
+        detail::check_cublas(
+            cublasZgemm(cublas.handle, CUBLAS_OP_N, CUBLAS_OP_N, to_int(dim, "dim"),
+                        1, to_int(dim, "dim"),
+                        reinterpret_cast<const cuDoubleComplex *>(&alpha),
+                        reinterpret_cast<const cuDoubleComplex *>(
+                            impl.dense_hamiltonian.get()),
+                        to_int(dim, "dim"),
+                        reinterpret_cast<const cuDoubleComplex *>(
+                            impl.dense_forward_states.get() + num_ops * dim),
+                        to_int(dim, "dim"),
+                        reinterpret_cast<const cuDoubleComplex *>(&beta),
+                        reinterpret_cast<cuDoubleComplex *>(impl.dense_lambda_k.get()),
+                        to_int(dim, "dim")),
+            "tree hamiltonian * psi_final");
     }
 
     const Complex energy_complex =
-        detail::complex_inner_product(forward_states_dev.get() + num_ops * dim,
-                                      lambda_k_dev.get(), dim);
-    detail::check_cuda(cudaDeviceSynchronize(), "dense scan forward");
-    const auto forward_end = std::chrono::steady_clock::now();
-
-    const auto back_start = forward_end;
-    detail::launch_build_adjoint_batch(gate_mats_dev.get(), suffix_scan_dev.get(),
-                                       num_ops, dim);
-
-    if (impl.dense_reverse_index_host.size() != num_ops) {
-        impl.dense_reverse_index_host.resize(num_ops);
-        for (std::size_t idx = 0; idx < num_ops; idx++) {
-            impl.dense_reverse_index_host[idx] =
-                to_int(num_ops - 1 - idx, "reverse index");
-        }
-    }
-    if (!impl.dense_reverse_indices_uploaded) {
-        detail::check_cuda(cudaMemcpyAsync(reverse_index_dev.get(),
-                                           impl.dense_reverse_index_host.data(),
-                                           sizeof(int) * num_ops,
-                                           cudaMemcpyHostToDevice, 0),
-                           "copy reverse indices");
-        impl.dense_reverse_indices_uploaded = true;
-    }
-    detail::launch_gather_vectors(suffix_scan_dev.get(), reverse_index_dev.get(),
-                                  reversed_tmp_dev.get(), num_ops, mat_elements);
-
-    detail::launch_fill_identity_matrices(suffix_scan_dev.get(), padded, dim);
-    detail::check_cuda(
-        cudaMemcpyAsync(suffix_scan_dev.get(), reversed_tmp_dev.get(),
-                        sizeof(Complex) * num_ops * mat_elements,
-                        cudaMemcpyDeviceToDevice, 0),
-        "copy reversed udag");
-    run_noncommutative_exclusive_scan_mats(
-        cublas.handle, suffix_scan_dev.get(), num_ops, dim, tmp_level_dev,
-        left_tmp_dev, left_indices_dev, right_indices_dev, ptr_a_dev, ptr_b_dev,
-        ptr_c_dev);
-
-    detail::launch_gather_vectors(suffix_scan_dev.get(), reverse_index_dev.get(),
-                                  suffix_for_ops_dev.get(), num_ops,
-                                  mat_elements);
-
+        detail::complex_inner_product(impl.dense_forward_states.get() + num_ops * dim,
+                                      impl.dense_lambda_k.get(), dim);
     {
         const Complex alpha(1.0, 0.0);
         const Complex beta(0.0, 0.0);
         detail::check_cublas(
-            cublasZgemmStridedBatched(
-                cublas.handle, CUBLAS_OP_N, CUBLAS_OP_N, to_int(dim, "dim"), 1,
-                to_int(dim, "dim"),
-                reinterpret_cast<const cuDoubleComplex *>(&alpha),
-                reinterpret_cast<const cuDoubleComplex *>(suffix_for_ops_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(mat_elements),
-                reinterpret_cast<const cuDoubleComplex *>(lambda_k_dev.get()),
-                to_int(dim, "dim"), 0,
-                reinterpret_cast<const cuDoubleComplex *>(&beta),
-                reinterpret_cast<cuDoubleComplex *>(lambda_by_op_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(dim),
-                to_int(num_ops, "num_ops")),
-            "suffix * lambda_k");
+            cublasZgemm(cublas.handle, CUBLAS_OP_C, CUBLAS_OP_N, to_int(dim, "dim"),
+                        1, to_int(dim, "dim"),
+                        reinterpret_cast<const cuDoubleComplex *>(&alpha),
+                        reinterpret_cast<const cuDoubleComplex *>(
+                            impl.dense_total_matrix.get()),
+                        to_int(dim, "dim"),
+                        reinterpret_cast<const cuDoubleComplex *>(
+                            impl.dense_lambda_k.get()),
+                        to_int(dim, "dim"),
+                        reinterpret_cast<const cuDoubleComplex *>(&beta),
+                        reinterpret_cast<cuDoubleComplex *>(impl.dense_eta_vector.get()),
+                        to_int(dim, "dim")),
+            "tree eta = T^H * lambda_k");
     }
-    detail::check_cuda(cudaDeviceSynchronize(), "dense scan back");
-    const auto back_end = std::chrono::steady_clock::now();
-
-    const auto gradient_start = std::chrono::steady_clock::now();
-    detail::launch_gather_vectors(lambda_by_op_dev.get(), param_gate_indices_dev.get(),
-                                  lambda_for_params_dev.get(), num_params_local,
-                                  dim);
-    detail::launch_gather_vectors(psi_before_dev.get(), param_gate_indices_dev.get(),
-                                  psi_before_for_params_dev.get(),
-                                  num_params_local, dim);
-
-    {
-        const Complex alpha(1.0, 0.0);
-        const Complex beta(0.0, 0.0);
-        detail::check_cublas(
-            cublasZgemmStridedBatched(
-                cublas.handle, CUBLAS_OP_N, CUBLAS_OP_N, to_int(dim, "dim"), 1,
-                to_int(dim, "dim"),
-                reinterpret_cast<const cuDoubleComplex *>(&alpha),
-                reinterpret_cast<const cuDoubleComplex *>(dgate_mats_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(mat_elements),
-                reinterpret_cast<const cuDoubleComplex *>(
-                    psi_before_for_params_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(dim),
-                reinterpret_cast<const cuDoubleComplex *>(&beta),
-                reinterpret_cast<cuDoubleComplex *>(deriv_states_dev.get()),
-                to_int(dim, "dim"), static_cast<long long>(dim),
-                to_int(num_params_local, "num_params")),
-            "dU * psi_before gemmStridedBatched");
-    }
-
-    detail::launch_reduce_real_inner_products(
-        lambda_for_params_dev.get(), deriv_states_dev.get(), gradients_dev.get(),
-        num_params_local, dim, 2.0);
-    detail::check_cuda(cudaDeviceSynchronize(), "dense scan completion");
-
-    const auto gpu_end = std::chrono::steady_clock::now();
-    const double gpu_scan_ms =
-        std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
+    run_dense_vector_downsweep(impl, num_ops, dim);
+    run_dense_gradient_tail(impl, num_params_local, dim);
 
     std::vector<double> gradients(num_params_local, 0.0);
     detail::check_cuda(
-        cudaMemcpy(gradients.data(), gradients_dev.get(),
+        cudaMemcpy(gradients.data(), impl.dense_gradients.get(),
                    sizeof(double) * gradients.size(), cudaMemcpyDeviceToHost),
         "copy gradients to host");
-    const auto gradient_end = std::chrono::steady_clock::now();
 
     DenseScanGpuRunResult result;
     result.energy = energy_complex.real();
     result.gradient = std::move(gradients);
-    result.num_ops = num_ops;
-    result.state_size = dim;
-    result.gpu_scan_ms = gpu_scan_ms;
-    result.forward_ms = elapsed_ms(forward_start, forward_end);
-    result.back_ms = elapsed_ms(back_start, back_end);
-    result.gradient_ms = elapsed_ms(gradient_start, gradient_end);
-    result.total_ms = elapsed_ms(gpu_start, gradient_end);
-
-    if (copy_states_to_host) {
-        result.forward_states.assign((num_ops + 1) * dim, Complex(0.0, 0.0));
-        result.backward_states.assign(num_ops * dim, Complex(0.0, 0.0));
-        detail::check_cuda(cudaMemcpy(result.forward_states.data(), forward_states_dev.get(),
-                                      sizeof(Complex) * result.forward_states.size(),
-                                      cudaMemcpyDeviceToHost),
-                           "copy forward states to host");
-        detail::check_cuda(cudaMemcpy(result.backward_states.data(), lambda_by_op_dev.get(),
-                                      sizeof(Complex) * result.backward_states.size(),
-                                      cudaMemcpyDeviceToHost),
-                           "copy backward states to host");
-    }
-
     return result;
 }
 
 auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
                                          const double *params,
-                                         std::size_t num_params,
-                                         bool measure_timings)
+                                         std::size_t num_params)
     -> EnergyGradResult {
     if (impl.num_qubits > 6) {
-        throw std::invalid_argument(
-            "dense_scan only supports num_qubits <= 6.");
+        throw std::invalid_argument("dense_scan only supports num_qubits <= 6.");
     }
     validate_num_params(impl.expected_params, num_params);
 
-    const auto e2e_start = std::chrono::steady_clock::now();
-    const auto prep_start = e2e_start;
     ensure_dense_gate_storage_layout(&impl.dense_storage_cache,
                                      &impl.dense_param_op_indices,
                                      impl.num_qubits, impl.num_layers,
@@ -361,105 +358,10 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     update_dense_gate_storage_params(&impl.dense_storage_cache,
                                      impl.dense_param_op_indices,
                                      impl.num_qubits, params);
-    const auto prep_end = std::chrono::steady_clock::now();
-    auto gpu = run_dense_scan_gpu_pipeline(impl, impl.dense_storage_cache, false);
-    const auto e2e_end = std::chrono::steady_clock::now();
+    auto gpu = run_dense_scan_gpu_pipeline(impl, impl.dense_storage_cache);
 
     EnergyGradResult result;
     result.energy = gpu.energy;
     result.gradient = std::move(gpu.gradient);
-    result.forward_ms = gpu.forward_ms;
-    result.back_ms = gpu.back_ms;
-    result.gradient_ms = gpu.gradient_ms;
-    result.total_ms = gpu.total_ms;
-    result.prep_ms = elapsed_ms(prep_start, prep_end);
-    result.gpu_pipeline_ms = gpu.total_ms;
-    result.e2e_total_ms = elapsed_ms(e2e_start, e2e_end);
-    if (!measure_timings) {
-        result.forward_ms = 0.0;
-        result.back_ms = 0.0;
-        result.gradient_ms = 0.0;
-        result.total_ms = 0.0;
-        result.prep_ms = 0.0;
-        result.gpu_pipeline_ms = 0.0;
-        result.e2e_total_ms = 0.0;
-    }
-    return result;
-}
-
-auto run_dense_scan_experiment(RingIsingCudaBackend::Impl &impl,
-                               const double *params, std::size_t num_params)
-    -> DenseScanExperimentResult {
-    if (impl.num_qubits > 6) {
-        throw std::invalid_argument(
-            "dense_scan only supports num_qubits <= 6.");
-    }
-    validate_num_params(impl.expected_params, num_params);
-
-    ensure_dense_gate_storage_layout(&impl.dense_storage_cache,
-                                     &impl.dense_param_op_indices,
-                                     impl.num_qubits, impl.num_layers,
-                                     impl.fuse_ring_cnot_layer);
-    update_dense_gate_storage_params(&impl.dense_storage_cache,
-                                     impl.dense_param_op_indices,
-                                     impl.num_qubits, params);
-    const auto &storage = impl.dense_storage_cache;
-
-    const auto cpu_start = std::chrono::steady_clock::now();
-    std::vector<double> cpu_grad;
-    std::vector<Complex> cpu_forward;
-    std::vector<Complex> cpu_backward;
-    double cpu_energy = 0.0;
-    run_cpu_dense_reference(storage, impl.num_qubits, impl.field, &cpu_grad,
-                            &cpu_forward, &cpu_backward, &cpu_energy);
-    const auto cpu_end = std::chrono::steady_clock::now();
-    const double cpu_reference_ms =
-        std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
-
-    const auto seq_start = std::chrono::steady_clock::now();
-    const auto sequential_result =
-        run_energy_and_grad_save_param_states(impl, params, num_params, false,
-                                              true);
-    const auto seq_end = std::chrono::steady_clock::now();
-    const double sequential_statevector_ms =
-        std::chrono::duration<double, std::milli>(seq_end - seq_start).count();
-
-    auto gpu = run_dense_scan_gpu_pipeline(impl, storage, true);
-
-    DenseScanExperimentResult result;
-    result.energy = gpu.energy;
-    result.gradient = std::move(gpu.gradient);
-    result.forward_states_ri = convert_states_to_ri(gpu.forward_states);
-    result.backward_states_ri = convert_states_to_ri(gpu.backward_states);
-    result.cpu_reference_ms = cpu_reference_ms;
-    result.gpu_scan_ms = gpu.gpu_scan_ms;
-    result.sequential_statevector_ms = sequential_statevector_ms;
-    result.num_forward_states = gpu.num_ops + 1;
-    result.num_backward_states = gpu.num_ops;
-    result.state_size = gpu.state_size;
-
-    const double grad_tolerance = 1.0e-7;
-    for (std::size_t idx = 0; idx < result.gradient.size(); idx++) {
-        if (std::abs(result.gradient[idx] - cpu_grad[idx]) > grad_tolerance) {
-            throw std::runtime_error(
-                "dense_scan gradient mismatch against CPU reference.");
-        }
-    }
-    if (std::abs(result.energy - cpu_energy) > 1.0e-8) {
-        throw std::runtime_error(
-            "dense_scan energy mismatch against CPU reference.");
-    }
-    for (std::size_t idx = 0; idx < result.gradient.size(); idx++) {
-        if (std::abs(result.gradient[idx] - sequential_result.gradient[idx]) >
-            1.0e-7) {
-            throw std::runtime_error(
-                "dense_scan gradient mismatch against sequential statevector.");
-        }
-    }
-    if (std::abs(result.energy - sequential_result.energy) > 1.0e-8) {
-        throw std::runtime_error(
-            "dense_scan energy mismatch against sequential statevector.");
-    }
-
     return result;
 }

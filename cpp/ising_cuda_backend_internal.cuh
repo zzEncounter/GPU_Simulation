@@ -103,24 +103,17 @@ auto fused_ryrz_gradients(const Complex *lambda, const Complex *state,
 
 void launch_fill_identity_matrices(Complex *mats, std::size_t batch,
                                    std::size_t dim);
-void launch_prepare_downsweep_buffers(Complex *mats,
-                                      const int *left_indices,
-                                      const int *right_indices,
-                                      Complex *left_tmp, std::size_t num_pairs,
-                                      std::size_t mat_elements);
-void launch_scatter_matrices(const Complex *source_mats,
-                             const int *target_indices, Complex *target_mats,
-                             std::size_t batch, std::size_t mat_elements);
-void launch_gather_vectors(const Complex *source_vectors,
-                           const int *source_indices, Complex *target_vectors,
-                           std::size_t batch, std::size_t vector_size);
-void launch_build_adjoint_batch(const Complex *source, Complex *target,
-                                std::size_t batch, std::size_t dim);
-void launch_reduce_real_inner_products(const Complex *lhs,
-                                       const Complex *rhs, double *out,
-                                       std::size_t batch,
-                                       std::size_t vector_size,
-                                       double scale);
+void launch_scatter_parent_vectors(const Complex *parent_vectors,
+                                   Complex *child_vectors,
+                                   std::size_t parent_count,
+                                   std::size_t vector_size);
+void launch_fused_dense_gradient_tail(const Complex *gate_mats,
+                                      const Complex *dgate_mats,
+                                      const int *param_gate_indices,
+                                      const Complex *psi_before,
+                                      const Complex *eta_before, double *out,
+                                      std::size_t num_params,
+                                      std::size_t vector_size);
 
 } // namespace detail
 } // namespace standalone_backend
