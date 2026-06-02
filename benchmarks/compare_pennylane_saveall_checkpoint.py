@@ -290,7 +290,7 @@ def _benchmark_standalone(
         resolution = backend.strategy_resolution
         dense_diag = (
             backend.dense_scan_experiment(params_np)
-            if mode == "bruteforce_parallel_q6"
+            if mode == "dense_scan"
             else None
         )
         timed = backend.energy_and_grad(params_np, return_timings=True)
@@ -413,7 +413,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--standalone-modes",
         nargs="+",
-        choices=("save_param_states", "checkpoint", "auto", "bruteforce_parallel_q6"),
+        choices=("save_param_states", "checkpoint", "auto", "dense_scan"),
         default=["save_param_states", "checkpoint"],
     )
     parser.add_argument(
@@ -423,7 +423,7 @@ def parse_args() -> argparse.Namespace:
             "save_param_states",
             "checkpoint",
             "auto",
-            "bruteforce_parallel_q6",
+            "dense_scan",
         ),
         default=None,
     )

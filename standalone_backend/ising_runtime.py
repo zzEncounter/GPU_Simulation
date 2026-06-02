@@ -100,6 +100,9 @@ class RingIsingAdjointBackend:
             "back_ms": float(raw["back_ms"]),
             "gradient_ms": float(raw["gradient_ms"]),
             "total_ms": float(raw["total_ms"]),
+            "prep_ms": float(raw.get("prep_ms", 0.0)),
+            "gpu_pipeline_ms": float(raw.get("gpu_pipeline_ms", float(raw["total_ms"]))),
+            "e2e_total_ms": float(raw.get("e2e_total_ms", float(raw["total_ms"]))),
         }
         if return_timings:
             return parsed

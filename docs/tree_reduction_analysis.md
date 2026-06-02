@@ -2,7 +2,7 @@
 
 ## 概述
 
-GPU 仿真后端中的 `bruteforce_parallel_q6` 梯度策略使用**树归约**（非交换独占扫描）来并行计算所有门矩阵的前缀/后缀乘积，实现 O(log N) 的并行深度，而非 O(N) 的顺序计算。本文档对 `cpp/ising_cuda_backend.cu` 和 `cpp/ising_cuda_kernels.cu` 中的实现进行详细分析。
+GPU 仿真后端中的 `dense_scan` 梯度策略使用**树归约**（非交换独占扫描）来并行计算所有门矩阵的前缀/后缀乘积，实现 O(log N) 的并行深度，而非 O(N) 的顺序计算。本文档对 `cpp/ising_cuda_backend.cu` 和 `cpp/ising_cuda_kernels.cu` 中的实现进行详细分析。
 
 ---
 

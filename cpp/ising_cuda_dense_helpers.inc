@@ -181,36 +181,82 @@ struct DenseScanGpuRunResult {
     double total_ms{0.0};
 };
 
+void ensure_dense_gate_storage_layout(DenseGateStorage *storage,
+                                      std::vector<std::size_t> *param_op_indices,
+                                      std::size_t num_qubits,
+                                      std::size_t num_layers,
+                                      bool fuse_ring_cnot_layer) {
+    if (storage == nullptr || param_op_indices == nullptr) {
+        throw std::invalid_argument(
+            "ensure_dense_gate_storage_layout requires non-null pointers.");
+    }
+    if (!storage->ops.empty()) {
+        return;
+    }
+
+    const auto ops =
+        build_ring_ops(num_qubits, num_layers, nullptr, fuse_ring_cnot_layer);
+    const auto dim = std::size_t{1} << num_qubits;
+    const auto mat_elements = dim * dim;
+    const auto num_params = num_qubits * num_layers * 2;
+
+    storage->ops = ops;
+    storage->gate_mats.assign(ops.size() * mat_elements, Complex(0.0, 0.0));
+    storage->dgate_mats.assign(num_params * mat_elements, Complex(0.0, 0.0));
+    storage->param_gate_indices.assign(num_params, -1);
+
+    param_op_indices->clear();
+    param_op_indices->reserve(num_params / 2);
+
+    for (std::size_t op_index = 0; op_index < ops.size(); op_index++) {
+        const auto &op = ops[op_index];
+        if (op.is_parametric) {
+            storage->param_gate_indices[op.param_index0] =
+                to_int(op_index, "op_index");
+            storage->param_gate_indices[op.param_index1] =
+                to_int(op_index, "op_index");
+            param_op_indices->push_back(op_index);
+            continue;
+        }
+        auto *u = storage->gate_mats.data() + op_index * mat_elements;
+        fill_dense_gate_matrix_for_op(op, num_qubits, dim, u, nullptr, nullptr);
+    }
+}
+
+void update_dense_gate_storage_params(
+    DenseGateStorage *storage, const std::vector<std::size_t> &param_op_indices,
+    std::size_t num_qubits, const double *params) {
+    if (storage == nullptr || params == nullptr) {
+        throw std::invalid_argument(
+            "update_dense_gate_storage_params requires non-null inputs.");
+    }
+
+    const auto dim = std::size_t{1} << num_qubits;
+    const auto mat_elements = dim * dim;
+    for (const auto op_index : param_op_indices) {
+        auto &op = storage->ops[op_index];
+        op.theta0 = params[op.param_index0];
+        op.theta1 = params[op.param_index1];
+        auto *u = storage->gate_mats.data() + op_index * mat_elements;
+        auto *dtheta =
+            storage->dgate_mats.data() + op.param_index0 * mat_elements;
+        auto *dphi = storage->dgate_mats.data() + op.param_index1 * mat_elements;
+        fill_fused_ryrz_matrices(u, dtheta, dphi, dim, op.wire0, op.theta0,
+                                 op.theta1);
+    }
+}
+
 auto build_dense_gate_storage(std::size_t num_qubits, std::size_t num_layers,
                               double field, const double *params,
                               bool fuse_ring_cnot_layer)
     -> DenseGateStorage {
     (void)field;
-    const auto ops = build_ring_ops(num_qubits, num_layers, params,
-                                    fuse_ring_cnot_layer);
-    const auto dim = std::size_t{1} << num_qubits;
-    const auto mat_elements = dim * dim;
-    const auto num_params = num_qubits * num_layers * 2;
-
     DenseGateStorage storage;
-    storage.ops = ops;
-    storage.gate_mats.assign(ops.size() * mat_elements, Complex(0.0, 0.0));
-    storage.dgate_mats.assign(num_params * mat_elements, Complex(0.0, 0.0));
-    storage.param_gate_indices.assign(num_params, -1);
-
-    for (std::size_t op_index = 0; op_index < ops.size(); op_index++) {
-        const auto &op = ops[op_index];
-        auto *u = storage.gate_mats.data() + op_index * mat_elements;
-        Complex *dtheta = nullptr;
-        Complex *dphi = nullptr;
-        if (op.is_parametric) {
-            dtheta = storage.dgate_mats.data() + op.param_index0 * mat_elements;
-            dphi = storage.dgate_mats.data() + op.param_index1 * mat_elements;
-            storage.param_gate_indices[op.param_index0] = to_int(op_index, "op_index");
-            storage.param_gate_indices[op.param_index1] = to_int(op_index, "op_index");
-        }
-        fill_dense_gate_matrix_for_op(op, num_qubits, dim, u, dtheta, dphi);
-    }
+    std::vector<std::size_t> param_op_indices;
+    ensure_dense_gate_storage_layout(&storage, &param_op_indices, num_qubits,
+                                     num_layers, fuse_ring_cnot_layer);
+    update_dense_gate_storage_params(&storage, param_op_indices, num_qubits,
+                                     params);
     return storage;
 }
 

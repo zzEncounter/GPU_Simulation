@@ -33,6 +33,9 @@ auto run_energy_only(RingIsingCudaBackend::Impl &impl, const double *params,
     result.total_ms =
         measure_timings ? elapsed_ms(total_start, std::chrono::steady_clock::now())
                         : 0.0;
+    result.prep_ms = 0.0;
+    result.gpu_pipeline_ms = result.total_ms;
+    result.e2e_total_ms = result.total_ms;
     return result;
 }
 
@@ -83,6 +86,9 @@ auto run_energy_and_grad_save_param_states(
             measure_timings
                 ? elapsed_ms(total_start, std::chrono::steady_clock::now())
                 : 0.0;
+        result.prep_ms = 0.0;
+        result.gpu_pipeline_ms = result.total_ms;
+        result.e2e_total_ms = result.total_ms;
         return result;
     }
 
@@ -141,6 +147,9 @@ auto run_energy_and_grad_save_param_states(
     result.total_ms =
         measure_timings ? elapsed_ms(total_start, std::chrono::steady_clock::now())
                         : 0.0;
+    result.prep_ms = 0.0;
+    result.gpu_pipeline_ms = result.total_ms;
+    result.e2e_total_ms = result.total_ms;
     return result;
 }
 
@@ -157,7 +166,7 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
         return run_energy_only(impl, params, num_params, measure_timings);
     }
 
-    if (impl.strategy == GradientStrategy::BruteForceParallelQ6) {
+    if (impl.strategy == GradientStrategy::DenseScan) {
         return run_dense_scan_energy_and_grad_fast(impl, params, num_params,
                                                    measure_timings);
     }
@@ -288,5 +297,8 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
     result.total_ms =
         measure_timings ? elapsed_ms(total_start, std::chrono::steady_clock::now())
                         : 0.0;
+    result.prep_ms = 0.0;
+    result.gpu_pipeline_ms = result.total_ms;
+    result.e2e_total_ms = result.total_ms;
     return result;
 }

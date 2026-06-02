@@ -141,7 +141,11 @@ def _print_result_summary(result: TrainingRunResult, config: StandaloneRunConfig
         print(f"    forward_ms: {timings.backend_forward_ms:.3f}")
         print(f"    back_ms: {timings.backend_back_ms:.3f}")
         print(f"    gradient_ms: {timings.backend_gradient_ms:.3f}")
-        print(f"    total_ms: {timings.backend_total_ms:.3f}")
+        if timings.backend_gpu_pipeline_ms is not None:
+            print(f"    gpu_pipeline_ms: {timings.backend_gpu_pipeline_ms:.3f}")
+        if timings.backend_prep_ms is not None:
+            print(f"    prep_ms: {timings.backend_prep_ms:.3f}")
+        print(f"    total_ms_e2e: {timings.backend_total_ms:.3f}")
 
     if result.gpu_telemetry_summary is not None:
         print()
@@ -169,6 +173,8 @@ def run_standalone(config: StandaloneRunConfig) -> TrainingRunResult:
         "back_ms": 0.0,
         "gradient_ms": 0.0,
         "total_ms": 0.0,
+        "prep_ms": 0.0,
+        "gpu_pipeline_ms": 0.0,
     }
 
     def _accumulate_backend_timings(aux: Any) -> None:
@@ -177,7 +183,11 @@ def run_standalone(config: StandaloneRunConfig) -> TrainingRunResult:
         timing_sums["forward_ms"] += float(aux["forward_ms"])
         timing_sums["back_ms"] += float(aux["back_ms"])
         timing_sums["gradient_ms"] += float(aux["gradient_ms"])
-        timing_sums["total_ms"] += float(aux["total_ms"])
+        timing_sums["total_ms"] += float(aux.get("e2e_total_ms", aux["total_ms"]))
+        timing_sums["prep_ms"] += float(aux.get("prep_ms", 0.0))
+        timing_sums["gpu_pipeline_ms"] += float(
+            aux.get("gpu_pipeline_ms", aux["total_ms"])
+        )
 
     def _energy_grad_step(current: np.ndarray) -> tuple[float, np.ndarray, dict[str, np.ndarray | float] | None]:
         if not config.measure_backend_timings:
@@ -223,6 +233,10 @@ def run_standalone(config: StandaloneRunConfig) -> TrainingRunResult:
         backend_back_ms = timing_sums["back_ms"] if config.measure_backend_timings else None
         backend_gradient_ms = timing_sums["gradient_ms"] if config.measure_backend_timings else None
         backend_total_ms = timing_sums["total_ms"] if config.measure_backend_timings else None
+        backend_prep_ms = timing_sums["prep_ms"] if config.measure_backend_timings else None
+        backend_gpu_pipeline_ms = (
+            timing_sums["gpu_pipeline_ms"] if config.measure_backend_timings else None
+        )
 
         return TrainingRunResult(
             backend_label="standalone_cuda",
@@ -238,6 +252,8 @@ def run_standalone(config: StandaloneRunConfig) -> TrainingRunResult:
                 backend_back_ms=backend_back_ms,
                 backend_gradient_ms=backend_gradient_ms,
                 backend_total_ms=backend_total_ms,
+                backend_prep_ms=backend_prep_ms,
+                backend_gpu_pipeline_ms=backend_gpu_pipeline_ms,
             ),
             metadata={
                 "requested_strategy": workflow.backend.strategy_resolution.requested_strategy,

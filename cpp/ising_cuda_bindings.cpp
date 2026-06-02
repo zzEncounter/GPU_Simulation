@@ -60,6 +60,9 @@ auto make_energy_grad_dict(const standalone_backend::EnergyGradResult &result)
     out["back_ms"] = py::float_(result.back_ms);
     out["gradient_ms"] = py::float_(result.gradient_ms);
     out["total_ms"] = py::float_(result.total_ms);
+    out["prep_ms"] = py::float_(result.prep_ms);
+    out["gpu_pipeline_ms"] = py::float_(result.gpu_pipeline_ms);
+    out["e2e_total_ms"] = py::float_(result.e2e_total_ms);
     return out;
 }
 

@@ -20,7 +20,7 @@
 - `standalone_backend/`：Python 侧 runtime。
 - `cpp/`：C++/CUDA 扩展实现。
 - `benchmarks/compare_pennylane_saveall_checkpoint.py`：PennyLane 与 standalone 策略对比脚本。
-- `benchmarks/compare_save_vs_bruteforce_q6.py`：`save_param_states` 与 `bruteforce_parallel_q6` 专项对比脚本（含时间拆解与 GPU 遥测）。
+- `benchmarks/compare_save_vs_dense_scan.py`：`save_param_states` 与 `dense_scan` 专项对比脚本（含时间拆解与 GPU 遥测）。
 - `tests/test_backends_parity.py`：数值一致性测试。
 - `old/`：历史归档（已从版本控制排除）。
 
@@ -30,7 +30,7 @@
 
 - `save_param_states`
 - `checkpoint`
-- `bruteforce_parallel_q6`（实验模式，要求 `num_qubits <= 6`）
+- `dense_scan`（实验模式，要求 `num_qubits <= 6`）
 - `auto`（仅在上面两者间自动选择）
 
 补充说明：
@@ -83,7 +83,7 @@ python -m venv .venv
 # 指定梯度策略
 .venv/bin/python run_standalone_backend.py --gradient-strategy save_param_states
 .venv/bin/python run_standalone_backend.py --gradient-strategy checkpoint
-.venv/bin/python run_standalone_backend.py --gradient-strategy bruteforce_parallel_q6
+.venv/bin/python run_standalone_backend.py --gradient-strategy dense_scan
 
 # checkpoint 粒度
 .venv/bin/python run_standalone_backend.py --gradient-strategy checkpoint --checkpoint-interval 8
@@ -120,10 +120,10 @@ standalone_result = run_standalone(
 ```bash
 .venv/bin/python benchmarks/compare_pennylane_saveall_checkpoint.py \
   --cases 20x4 \
-  --standalone-modes save_param_states checkpoint auto bruteforce_parallel_q6
+  --standalone-modes save_param_states checkpoint auto dense_scan
 ```
 
-`bruteforce_parallel_q6` 仅适用于 `--cases` 中 `qubits <= 6` 的条目。
+`dense_scan` 仅适用于 `--cases` 中 `qubits <= 6` 的条目。
 
 可选：
 
@@ -134,9 +134,9 @@ standalone_result = run_standalone(
   --disable-gate-fusion
 ```
 
-专项对比（仅 `save_param_states` vs `bruteforce_parallel_q6`）：
+专项对比（仅 `save_param_states` vs `dense_scan`）：
 
 ```bash
-.venv/bin/python benchmarks/compare_save_vs_bruteforce_q6.py \
+.venv/bin/python benchmarks/compare_save_vs_dense_scan.py \
   --cases 5x8 6x8
 ```

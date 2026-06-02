@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--gradient-strategy",
-        choices=("auto", "checkpoint", "save_param_states", "bruteforce_parallel_q6"),
+        choices=("auto", "checkpoint", "save_param_states", "dense_scan"),
         default=DEFAULT_STANDALONE_CONFIG.gradient_strategy,
         help="Adjoint gradient memory strategy for the standalone backend.",
     )

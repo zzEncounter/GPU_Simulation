@@ -14,6 +14,9 @@ struct EnergyGradResult {
     double back_ms{0.0};
     double gradient_ms{0.0};
     double total_ms{0.0};
+    double prep_ms{0.0};
+    double gpu_pipeline_ms{0.0};
+    double e2e_total_ms{0.0};
 };
 
 struct DenseScanExperimentResult {

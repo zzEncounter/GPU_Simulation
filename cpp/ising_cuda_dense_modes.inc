@@ -13,16 +13,21 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     }
     auto &cublas = *impl.dense_cublas;
 
-    auto ensure_alloc = [](auto &buffer, std::size_t required_size) {
-        if (buffer.size() != required_size) {
-            buffer.allocate(required_size);
+    auto ensure_alloc = [](auto &buffer, std::size_t required_size) -> bool {
+        if (buffer.size() == required_size) {
+            return false;
         }
+        buffer.allocate(required_size);
+        return true;
     };
 
     ensure_alloc(impl.dense_gate_mats, storage.gate_mats.size());
     ensure_alloc(impl.dense_dgate_mats, storage.dgate_mats.size());
-    ensure_alloc(impl.dense_hamiltonian, mat_elements);
-    ensure_alloc(impl.dense_param_gate_indices, storage.param_gate_indices.size());
+    const bool hamiltonian_reallocated =
+        ensure_alloc(impl.dense_hamiltonian, mat_elements);
+    const bool param_indices_reallocated =
+        ensure_alloc(impl.dense_param_gate_indices,
+                     storage.param_gate_indices.size());
     ensure_alloc(impl.dense_prefix_scan, padded * mat_elements);
     ensure_alloc(impl.dense_tmp_level, (padded / 2) * mat_elements);
     ensure_alloc(impl.dense_left_tmp, (padded / 2) * mat_elements);
@@ -31,7 +36,7 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     ensure_alloc(impl.dense_ptr_a, padded / 2);
     ensure_alloc(impl.dense_ptr_b, padded / 2);
     ensure_alloc(impl.dense_ptr_c, padded / 2);
-    ensure_alloc(impl.dense_ones_vector, dim);
+    const bool psi0_reallocated = ensure_alloc(impl.dense_ones_vector, dim);
     ensure_alloc(impl.dense_psi_before, num_ops * dim);
     ensure_alloc(impl.dense_psi_after, num_ops * dim);
     ensure_alloc(impl.dense_forward_states, (num_ops + 1) * dim);
@@ -42,9 +47,18 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     ensure_alloc(impl.dense_psi_before_for_params, num_params_local * dim);
     ensure_alloc(impl.dense_deriv_states, num_params_local * dim);
     ensure_alloc(impl.dense_gradients, num_params_local);
-    ensure_alloc(impl.dense_reverse_index, num_ops);
+    const bool reverse_index_reallocated =
+        ensure_alloc(impl.dense_reverse_index, num_ops);
     ensure_alloc(impl.dense_reversed_tmp, num_ops * mat_elements);
     ensure_alloc(impl.dense_suffix_for_ops, num_ops * mat_elements);
+
+    if (hamiltonian_reallocated || param_indices_reallocated ||
+        psi0_reallocated) {
+        impl.dense_static_device_uploaded = false;
+    }
+    if (reverse_index_reallocated) {
+        impl.dense_reverse_indices_uploaded = false;
+    }
 
     auto &gate_mats_dev = impl.dense_gate_mats;
     auto &dgate_mats_dev = impl.dense_dgate_mats;
@@ -81,36 +95,43 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
                                        sizeof(Complex) * storage.dgate_mats.size(),
                                        cudaMemcpyHostToDevice, 0),
                        "copy derivative mats");
-    detail::check_cuda(
-        cudaMemcpyAsync(param_gate_indices_dev.get(),
-                        storage.param_gate_indices.data(),
-                        sizeof(int) * storage.param_gate_indices.size(),
-                        cudaMemcpyHostToDevice, 0),
-        "copy param gate indices");
+    if (!impl.dense_static_device_uploaded) {
+        detail::check_cuda(
+            cudaMemcpyAsync(param_gate_indices_dev.get(),
+                            storage.param_gate_indices.data(),
+                            sizeof(int) * storage.param_gate_indices.size(),
+                            cudaMemcpyHostToDevice, 0),
+            "copy param gate indices");
+    }
 
     if (impl.dense_hamiltonian_host.size() != mat_elements) {
         impl.dense_hamiltonian_host.assign(mat_elements, Complex(0.0, 0.0));
         fill_ring_ising_hamiltonian_matrix(impl.dense_hamiltonian_host.data(), dim,
                                            impl.num_qubits, impl.field);
     }
-    detail::check_cuda(cudaMemcpyAsync(hamiltonian_dev.get(),
-                                       impl.dense_hamiltonian_host.data(),
-                                       sizeof(Complex) * mat_elements,
-                                       cudaMemcpyHostToDevice, 0),
-                       "copy hamiltonian");
+    if (!impl.dense_static_device_uploaded) {
+        detail::check_cuda(cudaMemcpyAsync(hamiltonian_dev.get(),
+                                           impl.dense_hamiltonian_host.data(),
+                                           sizeof(Complex) * mat_elements,
+                                           cudaMemcpyHostToDevice, 0),
+                           "copy hamiltonian");
+    }
 
     if (impl.dense_psi0_host.size() != dim) {
         impl.dense_psi0_host.assign(dim, Complex(0.0, 0.0));
         impl.dense_psi0_host[0] = Complex(1.0, 0.0);
     }
-    detail::check_cuda(cudaMemcpyAsync(ones_vector_dev.get(),
-                                       impl.dense_psi0_host.data(),
-                                       sizeof(Complex) * dim,
-                                       cudaMemcpyHostToDevice, 0),
-                       "copy psi0");
+    if (!impl.dense_static_device_uploaded) {
+        detail::check_cuda(cudaMemcpyAsync(ones_vector_dev.get(),
+                                           impl.dense_psi0_host.data(),
+                                           sizeof(Complex) * dim,
+                                           cudaMemcpyHostToDevice, 0),
+                           "copy psi0");
+        impl.dense_static_device_uploaded = true;
+    }
 
     const auto gpu_start = std::chrono::steady_clock::now();
-    const auto forward_start = std::chrono::steady_clock::now();
+    const auto forward_start = gpu_start;
 
     detail::launch_fill_identity_matrices(prefix_scan_dev.get(), padded, dim);
     detail::check_cuda(
@@ -191,7 +212,7 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     detail::check_cuda(cudaDeviceSynchronize(), "dense scan forward");
     const auto forward_end = std::chrono::steady_clock::now();
 
-    const auto back_start = std::chrono::steady_clock::now();
+    const auto back_start = forward_end;
     detail::launch_build_adjoint_batch(gate_mats_dev.get(), suffix_scan_dev.get(),
                                        num_ops, dim);
 
@@ -202,11 +223,14 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
                 to_int(num_ops - 1 - idx, "reverse index");
         }
     }
-    detail::check_cuda(cudaMemcpyAsync(reverse_index_dev.get(),
-                                       impl.dense_reverse_index_host.data(),
-                                       sizeof(int) * num_ops, cudaMemcpyHostToDevice,
-                                       0),
-                       "copy reverse indices");
+    if (!impl.dense_reverse_indices_uploaded) {
+        detail::check_cuda(cudaMemcpyAsync(reverse_index_dev.get(),
+                                           impl.dense_reverse_index_host.data(),
+                                           sizeof(int) * num_ops,
+                                           cudaMemcpyHostToDevice, 0),
+                           "copy reverse indices");
+        impl.dense_reverse_indices_uploaded = true;
+    }
     detail::launch_gather_vectors(suffix_scan_dev.get(), reverse_index_dev.get(),
                                   reversed_tmp_dev.get(), num_ops, mat_elements);
 
@@ -324,14 +348,22 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     -> EnergyGradResult {
     if (impl.num_qubits > 6) {
         throw std::invalid_argument(
-            "bruteforce_parallel_q6 only supports num_qubits <= 6.");
+            "dense_scan only supports num_qubits <= 6.");
     }
     validate_num_params(impl.expected_params, num_params);
 
-    const auto storage = build_dense_gate_storage(
-        impl.num_qubits, impl.num_layers, impl.field, params,
-        impl.fuse_ring_cnot_layer);
-    auto gpu = run_dense_scan_gpu_pipeline(impl, storage, false);
+    const auto e2e_start = std::chrono::steady_clock::now();
+    const auto prep_start = e2e_start;
+    ensure_dense_gate_storage_layout(&impl.dense_storage_cache,
+                                     &impl.dense_param_op_indices,
+                                     impl.num_qubits, impl.num_layers,
+                                     impl.fuse_ring_cnot_layer);
+    update_dense_gate_storage_params(&impl.dense_storage_cache,
+                                     impl.dense_param_op_indices,
+                                     impl.num_qubits, params);
+    const auto prep_end = std::chrono::steady_clock::now();
+    auto gpu = run_dense_scan_gpu_pipeline(impl, impl.dense_storage_cache, false);
+    const auto e2e_end = std::chrono::steady_clock::now();
 
     EnergyGradResult result;
     result.energy = gpu.energy;
@@ -340,11 +372,17 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     result.back_ms = gpu.back_ms;
     result.gradient_ms = gpu.gradient_ms;
     result.total_ms = gpu.total_ms;
+    result.prep_ms = elapsed_ms(prep_start, prep_end);
+    result.gpu_pipeline_ms = gpu.total_ms;
+    result.e2e_total_ms = elapsed_ms(e2e_start, e2e_end);
     if (!measure_timings) {
         result.forward_ms = 0.0;
         result.back_ms = 0.0;
         result.gradient_ms = 0.0;
         result.total_ms = 0.0;
+        result.prep_ms = 0.0;
+        result.gpu_pipeline_ms = 0.0;
+        result.e2e_total_ms = 0.0;
     }
     return result;
 }
@@ -354,13 +392,18 @@ auto run_dense_scan_experiment(RingIsingCudaBackend::Impl &impl,
     -> DenseScanExperimentResult {
     if (impl.num_qubits > 6) {
         throw std::invalid_argument(
-            "bruteforce_parallel_q6 only supports num_qubits <= 6.");
+            "dense_scan only supports num_qubits <= 6.");
     }
     validate_num_params(impl.expected_params, num_params);
 
-    const auto storage = build_dense_gate_storage(
-        impl.num_qubits, impl.num_layers, impl.field, params,
-        impl.fuse_ring_cnot_layer);
+    ensure_dense_gate_storage_layout(&impl.dense_storage_cache,
+                                     &impl.dense_param_op_indices,
+                                     impl.num_qubits, impl.num_layers,
+                                     impl.fuse_ring_cnot_layer);
+    update_dense_gate_storage_params(&impl.dense_storage_cache,
+                                     impl.dense_param_op_indices,
+                                     impl.num_qubits, params);
+    const auto &storage = impl.dense_storage_cache;
 
     const auto cpu_start = std::chrono::steady_clock::now();
     std::vector<double> cpu_grad;
@@ -399,23 +442,23 @@ auto run_dense_scan_experiment(RingIsingCudaBackend::Impl &impl,
     for (std::size_t idx = 0; idx < result.gradient.size(); idx++) {
         if (std::abs(result.gradient[idx] - cpu_grad[idx]) > grad_tolerance) {
             throw std::runtime_error(
-                "bruteforce_parallel_q6 gradient mismatch against CPU reference.");
+                "dense_scan gradient mismatch against CPU reference.");
         }
     }
     if (std::abs(result.energy - cpu_energy) > 1.0e-8) {
         throw std::runtime_error(
-            "bruteforce_parallel_q6 energy mismatch against CPU reference.");
+            "dense_scan energy mismatch against CPU reference.");
     }
     for (std::size_t idx = 0; idx < result.gradient.size(); idx++) {
         if (std::abs(result.gradient[idx] - sequential_result.gradient[idx]) >
             1.0e-7) {
             throw std::runtime_error(
-                "bruteforce_parallel_q6 gradient mismatch against sequential statevector.");
+                "dense_scan gradient mismatch against sequential statevector.");
         }
     }
     if (std::abs(result.energy - sequential_result.energy) > 1.0e-8) {
         throw std::runtime_error(
-            "bruteforce_parallel_q6 energy mismatch against sequential statevector.");
+            "dense_scan energy mismatch against sequential statevector.");
     }
 
     return result;

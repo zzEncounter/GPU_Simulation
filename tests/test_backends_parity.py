@@ -106,7 +106,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
         np.testing.assert_allclose(auto_energy, explicit_energy, atol=1e-9, rtol=1e-9)
         np.testing.assert_allclose(auto_grad, explicit_grad, atol=1e-8, rtol=1e-8)
 
-    def test_bruteforce_parallel_q6_matches_save_param_states(self) -> None:
+    def test_dense_scan_matches_save_param_states(self) -> None:
         num_qubits = 5
         layers = 2
         field = 0.9
@@ -126,7 +126,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 num_qubits=num_qubits,
                 layers=layers,
                 field=field,
-                gradient_strategy="bruteforce_parallel_q6",
+                gradient_strategy="dense_scan",
             )
         )
 

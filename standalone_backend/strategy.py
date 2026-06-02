@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from .config import RingIsingConfig, StrategyResolution
+from .config import RingIsingConfig, StrategyResolution, normalize_strategy_name
 
 
 def query_visible_gpu_memory() -> tuple[int | None, int | None, str | None]:
@@ -55,11 +55,11 @@ def estimate_checkpoint_interval_for_budget(
 
 
 def resolve_strategy(config: RingIsingConfig) -> StrategyResolution:
-    requested = config.gradient_strategy
+    requested = normalize_strategy_name(config.gradient_strategy)
     if requested != "auto":
         checkpoint_interval_ops = (
             0
-            if requested in {"save_param_states", "bruteforce_parallel_q6"}
+            if requested in {"save_param_states", "dense_scan"}
             else config.resolve_checkpoint_interval_ops(strategy=requested)
         )
         return StrategyResolution(

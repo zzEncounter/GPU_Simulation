@@ -30,7 +30,7 @@ enum class OpKind { RY, RZ, CNOT, FusedRYRZ, RingCNOTLayer };
 enum class GradientStrategy {
     SaveParamStates,
     Checkpoint,
-    BruteForceParallelQ6
+    DenseScan
 };
 
 struct OpDesc {
@@ -54,8 +54,10 @@ auto build_ring_ops(std::size_t num_qubits, std::size_t num_layers,
     for (std::size_t layer = 0; layer < num_layers; layer++) {
         for (std::size_t wire = 0; wire < num_qubits; wire++) {
             const auto base = (layer * num_qubits + wire) * 2;
-            ops.push_back({OpKind::FusedRYRZ, wire, 0, params[base],
-                           params[base + 1], base, base + 1, true});
+            const double theta0 = params != nullptr ? params[base] : 0.0;
+            const double theta1 = params != nullptr ? params[base + 1] : 0.0;
+            ops.push_back({OpKind::FusedRYRZ, wire, 0, theta0,
+                           theta1, base, base + 1, true});
         }
         if (fuse_ring_cnot_layer) {
             ops.push_back(
@@ -180,12 +182,15 @@ auto parse_gradient_strategy(const std::string &strategy)
     if (strategy == "checkpoint") {
         return GradientStrategy::Checkpoint;
     }
+    if (strategy == "dense_scan") {
+        return GradientStrategy::DenseScan;
+    }
     if (strategy == "bruteforce_parallel_q6") {
-        return GradientStrategy::BruteForceParallelQ6;
+        return GradientStrategy::DenseScan;
     }
     throw std::invalid_argument(
         "Unknown gradient strategy. Expected one of: "
-        "save_param_states, checkpoint, bruteforce_parallel_q6.");
+        "save_param_states, checkpoint, dense_scan.");
 }
 
 struct CublasHandle {
@@ -279,9 +284,13 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<int> dense_reverse_index;
     DeviceBuffer<Complex> dense_reversed_tmp;
     DeviceBuffer<Complex> dense_suffix_for_ops;
+    DenseGateStorage dense_storage_cache;
+    std::vector<std::size_t> dense_param_op_indices;
     std::vector<Complex> dense_hamiltonian_host;
     std::vector<Complex> dense_psi0_host;
     std::vector<int> dense_reverse_index_host;
+    bool dense_static_device_uploaded{false};
+    bool dense_reverse_indices_uploaded{false};
 
     Impl(std::size_t num_qubits_, std::size_t num_layers_, double field_,
          const std::string &gradient_strategy_,
@@ -304,7 +313,7 @@ struct RingIsingCudaBackend::Impl {
             strategy = GradientStrategy::SaveParamStates;
         }
 
-        if (strategy == GradientStrategy::BruteForceParallelQ6 ||
+        if (strategy == GradientStrategy::DenseScan ||
             strategy == GradientStrategy::SaveParamStates) {
             save_param_states.allocate((expected_params / 2) * state_size);
         } else {
@@ -384,7 +393,7 @@ DenseScanExperimentResult dense_scan_experiment(
     std::size_t num_qubits, std::size_t num_layers, double field,
     bool fuse_ring_cnot_layer, const double *params, std::size_t num_params) {
     RingIsingCudaBackend backend(num_qubits, num_layers, field,
-                                 "bruteforce_parallel_q6",
+                                 "dense_scan",
                                  fuse_ring_cnot_layer, 0);
     return backend.dense_scan_experiment(params, num_params);
 }
