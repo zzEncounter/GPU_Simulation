@@ -14,7 +14,6 @@ from .telemetry import (
 )
 from .timing import (
     capture_telemetry_window,
-    derive_timing_breakdown,
     median_runtime_ms,
     median_timing_fields,
 )
@@ -29,7 +28,6 @@ __all__ = [
     "GpuTelemetrySummary",
     "capture_telemetry_window",
     "create_device",
-    "derive_timing_breakdown",
     "format_gate_types",
     "median_runtime_ms",
     "median_timing_fields",

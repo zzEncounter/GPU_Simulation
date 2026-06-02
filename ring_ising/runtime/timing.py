@@ -56,14 +56,6 @@ def median_timing_fields(
         for field_name, field_samples in samples.items()
     }
 
-
-def derive_timing_breakdown(forward_ms: float, gradient_ms: float) -> tuple[float, float]:
-    """Infer backward and total time from forward and full-gradient timings."""
-    back_ms = max(0.0, gradient_ms - forward_ms)
-    total_ms = forward_ms + back_ms
-    return back_ms, total_ms
-
-
 def capture_telemetry_window(
     fn: Callable[[], Any],
     *,
