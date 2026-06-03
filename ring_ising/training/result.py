@@ -26,7 +26,7 @@ class LoopTimingBreakdown:
 
 @dataclass
 class TrainingRunResult:
-    """High-level outputs shared by both baseline and standalone workflows."""
+    """High-level outputs shared by both PennyLane and standalone workflows."""
 
     backend_label: str
     final_params: np.ndarray
@@ -42,7 +42,6 @@ def validate_common_run_args(
     num_qubits: int,
     layers: int,
     steps: int,
-    report_every: int,
     telemetry_interval_s: float,
 ) -> None:
     """Validate the common subset of training-loop options."""
@@ -52,8 +51,6 @@ def validate_common_run_args(
         raise ValueError("layers must be at least 1.")
     if steps < 0:
         raise ValueError("steps must be non-negative.")
-    if report_every < 1:
-        raise ValueError("report_every must be at least 1.")
     if telemetry_interval_s <= 0:
         raise ValueError("telemetry_interval_s must be positive.")
 

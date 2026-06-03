@@ -1,10 +1,11 @@
-"""Configuration and sizing helpers for the standalone backend."""
+"""Configuration and sizing helpers for the standalone CUDA backend."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
-import numpy as np
+from ring_ising.config import STANDALONE_GRADIENT_STRATEGIES
 
 
 def normalize_strategy_name(strategy: str) -> str:
@@ -14,17 +15,15 @@ def normalize_strategy_name(strategy: str) -> str:
 
 
 @dataclass(frozen=True)
-class RingIsingConfig:
-    """Configuration for the standalone ring-Ising workflow."""
+class StandaloneBackendConfig:
+    """Configuration for the standalone CUDA backend runtime."""
 
-    num_qubits: int = 12
-    layers: int = 3
-    field: float = 1.0
-    gradient_strategy: str = "auto"
-    checkpoint_interval_ops: int | None = None
-    gate_fusion: bool = True
-    auto_memory_budget_fraction: float = 0.85
-    auto_memory_reserve_mib: int = 1024
+    num_qubits: int
+    layers: int
+    field: float
+    gradient_strategy: str
+    checkpoint_interval_ops: int | None
+    gate_fusion: bool
 
     @property
     def param_shape(self) -> tuple[int, int, int]:
@@ -33,6 +32,10 @@ class RingIsingConfig:
     @property
     def num_params(self) -> int:
         return self.layers * self.num_qubits * 2
+
+    @property
+    def normalized_gradient_strategy(self) -> str:
+        return normalize_strategy_name(self.gradient_strategy)
 
     @property
     def num_ops(self) -> int:
@@ -56,12 +59,14 @@ class RingIsingConfig:
     def default_checkpoint_interval_ops(self) -> int:
         if self.num_ops <= 1:
             return 0
-        auto_interval = int(np.ceil(np.sqrt(self.num_ops)))
-        return max(1, min(auto_interval, self.num_ops - 1))
+        heuristic_interval = int(math.ceil(math.sqrt(self.num_ops)))
+        return max(1, min(heuristic_interval, self.num_ops - 1))
 
-    def resolve_checkpoint_interval_ops(self, strategy: str = "checkpoint") -> int:
-        strategy = normalize_strategy_name(strategy)
-        if strategy == "save_param_states":
+    def resolve_checkpoint_interval_ops(self, strategy: str | None = None) -> int:
+        strategy = normalize_strategy_name(
+            self.gradient_strategy if strategy is None else strategy
+        )
+        if strategy in {"save_param_states", "dense_scan"}:
             return 0
         if self.num_ops <= 1:
             return 0
@@ -80,16 +85,17 @@ class RingIsingConfig:
             return 3 * padded + max(self.num_ops + 1, padded) + 3
         if strategy != "checkpoint":
             raise ValueError(
-                "strategy must be 'save_param_states', 'checkpoint', "
-                "or 'dense_scan'."
+                "strategy must be 'save_param_states', 'checkpoint', or 'dense_scan'."
             )
-        checkpoint_interval_ops = self.resolve_checkpoint_interval_ops(
-            strategy="checkpoint"
-        ) if checkpoint_interval_ops is None else checkpoint_interval_ops
-        if checkpoint_interval_ops == 0:
+        interval = (
+            self.resolve_checkpoint_interval_ops("checkpoint")
+            if checkpoint_interval_ops is None
+            else checkpoint_interval_ops
+        )
+        if interval == 0:
             return self.num_parametric_gates + 3
-        num_chunks = int(np.ceil(self.num_ops / checkpoint_interval_ops))
-        return num_chunks + checkpoint_interval_ops + 5
+        num_chunks = int(math.ceil(self.num_ops / interval))
+        return num_chunks + interval + 5
 
     def estimated_gradient_workspace_gib_for(
         self, strategy: str, checkpoint_interval_ops: int | None = None
@@ -100,21 +106,21 @@ class RingIsingConfig:
                 return 0.0
             padded = 1 << (self.num_ops - 1).bit_length()
             matrix_count = (
-                self.num_ops  # gate mats
-                + self.num_params  # derivative mats
-                + padded  # tree leaves
-                + max(0, padded - 1)  # tree internal nodes
-                + 2  # hamiltonian + total matrix
+                self.num_ops
+                + self.num_params
+                + padded
+                + max(0, padded - 1)
+                + 2
             )
             vector_count = (
-                3 * padded  # psi_before/after + eta_before
-                + max(self.num_ops + 1, padded)  # forward state / downsweep scratch
-                + 3  # psi0 + lambda_k + eta
+                3 * padded
+                + max(self.num_ops + 1, padded)
+                + 3
             )
             bytes_total = (
                 matrix_count * self.dense_matrix_nbytes
                 + vector_count * self.statevector_nbytes
-                + self.num_params * (8 + 4)  # gradients + param_gate_indices
+                + self.num_params * (8 + 4)
             )
             return bytes_total / (1024**3)
         return (
@@ -124,38 +130,16 @@ class RingIsingConfig:
         )
 
     def validate(self) -> None:
-        strategy = normalize_strategy_name(self.gradient_strategy)
+        strategy = self.normalized_gradient_strategy
         if self.num_qubits < 2:
             raise ValueError("num_qubits must be at least 2.")
         if self.layers < 1:
             raise ValueError("layers must be at least 1.")
-        if strategy not in {
-            "auto",
-            "save_param_states",
-            "checkpoint",
-            "dense_scan",
-        }:
+        if strategy not in STANDALONE_GRADIENT_STRATEGIES:
             raise ValueError(
-                "gradient_strategy must be 'auto', 'save_param_states', "
-                "'checkpoint', or 'dense_scan'."
+                "gradient_strategy must be 'save_param_states', 'checkpoint', or 'dense_scan'."
             )
         if strategy == "dense_scan" and self.num_qubits > 6:
             raise ValueError("dense_scan requires num_qubits <= 6.")
         if self.checkpoint_interval_ops is not None and self.checkpoint_interval_ops < 1:
             raise ValueError("checkpoint_interval_ops must be positive when provided.")
-        if not (0.0 < self.auto_memory_budget_fraction <= 1.0):
-            raise ValueError("auto_memory_budget_fraction must be in (0, 1].")
-        if self.auto_memory_reserve_mib < 0:
-            raise ValueError("auto_memory_reserve_mib must be non-negative.")
-
-
-@dataclass(frozen=True)
-class StrategyResolution:
-    requested_strategy: str
-    resolved_strategy: str
-    checkpoint_interval_ops: int
-    available_gpu_memory_mib: int | None
-    total_gpu_memory_mib: int | None
-    memory_budget_mib: float | None
-    estimated_workspace_gib: float
-    note: str | None = None

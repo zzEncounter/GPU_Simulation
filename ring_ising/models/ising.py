@@ -1,4 +1,4 @@
-"""Reusable Ising-model pieces for the adjoint-diff baseline."""
+"""Reusable Ising-model pieces shared by the PennyLane and standalone workflows."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ from typing import Any
 
 import pennylane as qml
 from pennylane import numpy as pnp
-
-from ring_ising.params import make_initial_params_array
 
 
 def build_ring_ising_hamiltonian(num_qubits: int, field: float) -> Any:
@@ -44,16 +42,3 @@ def hardware_efficient_ring(params: pnp.ndarray) -> None:
 
     for layer in range(num_layers):
         apply_ring_layer(params[layer])
-
-
-def make_initial_params(
-    num_qubits: int, layers: int, seed: int, init_scale: float
-) -> pnp.ndarray:
-    """Create a trainable parameter tensor for the ansatz."""
-    initial = make_initial_params_array(
-        num_qubits=num_qubits,
-        layers=layers,
-        seed=seed,
-        init_scale=init_scale,
-    )
-    return pnp.array(initial, requires_grad=True)

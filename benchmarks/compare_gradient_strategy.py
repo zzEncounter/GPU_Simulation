@@ -1,4 +1,4 @@
-"""Compare standalone training runs across multiple modes."""
+"""Compare standalone training runs across gradient strategies."""
 
 from __future__ import annotations
 
@@ -12,7 +12,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ring_ising.workflows.standalone import StandaloneRunConfig, run_standalone
+from ring_ising import RunConfig, run_standalone
+from ring_ising.config import STANDALONE_GRADIENT_STRATEGIES
+
+VALID_MODES = STANDALONE_GRADIENT_STRATEGIES
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,40 @@ def default_steps_for(case: BenchmarkCase) -> int:
     base_steps_by_layers = {8: 120, 32: 80, 128: 40, 512: 12, 2048: 4}
     base = base_steps_by_layers.get(case.layers, max(2, 960 // max(case.layers, 1)))
     return max(2, int(round(base * 4.0 / case.num_qubits)))
+
+
+def parse_mode(text: str) -> str:
+    mode = text.strip()
+    if mode not in VALID_MODES:
+        choices = ", ".join(VALID_MODES)
+        raise argparse.ArgumentTypeError(
+            f"Invalid mode {text!r}. Expected one of: {choices}"
+        )
+    return mode
+
+
+def build_run_config(
+    mode: str,
+    *,
+    case: BenchmarkCase,
+    steps: int,
+    args: argparse.Namespace,
+) -> RunConfig:
+    return RunConfig(
+        backend="standalone",
+        num_qubits=case.num_qubits,
+        layers=case.layers,
+        field=args.field,
+        steps=steps,
+        stepsize=args.stepsize,
+        seed=args.seed,
+        init_scale=args.init_scale,
+        gradient_strategy=mode,
+        gate_fusion=args.gate_fusion,
+        verbose=False,
+        show_progress=False,
+        gpu_telemetry=False,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,11 +102,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--modes",
         nargs="+",
+        type=parse_mode,
         default=["save_param_states", "dense_scan"],
-        help="Standalone backend modes to compare.",
+        help="Standalone gradient strategies to compare.",
     )
     parser.add_argument(
         "--reference-mode",
+        type=parse_mode,
         default="save_param_states",
         help="Mode used as the timing and energy reference.",
     )
@@ -92,7 +131,7 @@ def main() -> None:
     args = parse_args()
     rows: list[dict[str, object]] = []
 
-    print("Standalone mode comparison")
+    print("Standalone gradient strategy comparison")
     print(f"  Modes: {', '.join(args.modes)}")
     print(f"  Reference mode: {args.reference_mode}")
     print(f"  Gate fusion enabled: {args.gate_fusion}")
@@ -102,22 +141,7 @@ def main() -> None:
         steps = default_steps_for(case)
         case_rows: list[dict[str, object]] = []
         for mode in args.modes:
-            result = run_standalone(
-                StandaloneRunConfig(
-                    num_qubits=case.num_qubits,
-                    layers=case.layers,
-                    field=args.field,
-                    steps=steps,
-                    stepsize=args.stepsize,
-                    seed=args.seed,
-                    init_scale=args.init_scale,
-                    report_every=1,
-                    gradient_strategy=mode,
-                    gate_fusion=args.gate_fusion,
-                    verbose=False,
-                    gpu_telemetry=False,
-                )
-            )
+            result = run_standalone(build_run_config(mode, case=case, steps=steps, args=args))
             case_rows.append(
                 {
                     "num_qubits": case.num_qubits,

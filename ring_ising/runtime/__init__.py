@@ -1,6 +1,6 @@
 """Runtime helpers for device selection, telemetry, and timing."""
 
-from .device import DEVICE_CANDIDATES, DeviceSelection, create_device
+from .device import DeviceSelection, create_device
 from .meta import format_gate_types, package_version
 from .telemetry import (
     GpuTelemetryGpuSummary,
@@ -19,7 +19,6 @@ from .timing import (
 )
 
 __all__ = [
-    "DEVICE_CANDIDATES",
     "DeviceSelection",
     "GpuTelemetryGpuSummary",
     "GpuTelemetryMonitor",

@@ -1,4 +1,4 @@
-"""PennyLane baseline workflow using shared training-run abstractions."""
+"""PennyLane workflow using shared training-run abstractions."""
 
 from __future__ import annotations
 
@@ -8,11 +8,19 @@ from typing import Callable
 
 import numpy as np
 import pennylane as qml
-from pennylane import numpy as pnp
 
 from ring_ising.cli.common import format_telemetry_banner
-from ring_ising.models import build_ring_ising_hamiltonian, hardware_efficient_ring, make_initial_params
-from ring_ising.runtime import create_device, format_gate_types, package_version, print_gpu_telemetry_summary
+from ring_ising.config import RunConfig
+from ring_ising.models import (
+    build_ring_ising_hamiltonian,
+    hardware_efficient_ring,
+)
+from ring_ising.runtime import (
+    create_device,
+    format_gate_types,
+    package_version,
+    print_gpu_telemetry_summary,
+)
 from ring_ising.training import (
     LoopTimingBreakdown,
     TrainingRunResult,
@@ -20,78 +28,56 @@ from ring_ising.training import (
     run_with_optional_telemetry,
     validate_common_run_args,
 )
+from .common import apply_gradient_step, as_pennylane_params, make_initial_params
 
 
 @dataclass(frozen=True)
-class BaselineConfig:
-    """Configuration for one PennyLane baseline run."""
+class PennyLaneWorkflow:
+    """Compiled QNodes and device metadata for the PennyLane backend."""
 
-    num_qubits: int = 12
-    layers: int = 3
-    field: float = 1.0
-    steps: int = 20
-    stepsize: float = 0.08
-    seed: int = 7
-    init_scale: float = 0.3
-    report_every: int = 5
-    device: str = "gpu"
-    verbose: bool = True
-    gpu_telemetry: bool = False
-    telemetry_interval_s: float = 0.5
-    telemetry_live: bool = False
-
-
-@dataclass(frozen=True)
-class BaselineWorkflow:
-    """Compiled QNodes and device metadata for the baseline."""
-
-    config: BaselineConfig
+    config: RunConfig
     device_name: str
-    energy_qnode: Callable[[pnp.ndarray], float]
-    gradient_fn: Callable[[pnp.ndarray], pnp.ndarray]
-    selection_errors: tuple[str, ...]
+    energy_qnode: Callable[[object], float]
+    gradient_fn: Callable[[object], object]
 
 
-BaselineResult = TrainingRunResult
+PennyLaneResult = TrainingRunResult
 TimingBreakdown = LoopTimingBreakdown
 
 
-def create_workflow(config: BaselineConfig) -> BaselineWorkflow:
-    """Create the QNodes needed by the baseline."""
-    selection = create_device(requested_mode=config.device, wires=config.num_qubits)
+def create_pennylane_workflow(config: RunConfig) -> PennyLaneWorkflow:
+    """Create the QNodes needed by the PennyLane backend."""
+    selection = create_device(wires=config.num_qubits)
     hamiltonian = build_ring_ising_hamiltonian(config.num_qubits, config.field)
 
     @qml.qnode(selection.device, diff_method="adjoint")
-    def energy_qnode(params: pnp.ndarray) -> float:
+    def energy_qnode(params) -> float:
         hardware_efficient_ring(params)
         return qml.expval(hamiltonian)
 
     gradient_fn = qml.grad(energy_qnode)
 
-    return BaselineWorkflow(
+    return PennyLaneWorkflow(
         config=config,
         device_name=selection.device_name,
         energy_qnode=energy_qnode,
         gradient_fn=gradient_fn,
-        selection_errors=tuple(selection.selection_errors),
     )
 
 
-def print_runtime_summary(workflow: BaselineWorkflow, params: pnp.ndarray) -> None:
+def print_pennylane_runtime_summary(
+    workflow: PennyLaneWorkflow,
+    params: np.ndarray,
+) -> None:
     """Print the environment and circuit metadata for the run."""
-    specs = qml.specs(workflow.energy_qnode)(params)
+    specs = qml.specs(workflow.energy_qnode)(as_pennylane_params(params))
     resources = specs["resources"]
 
     print("Runtime:")
     print(f"  PennyLane: {package_version('pennylane')}")
     print(f"  PennyLane-Lightning: {package_version('pennylane-lightning')}")
     print(f"  PennyLane-Lightning-GPU: {package_version('pennylane-lightning-gpu')}")
-    print(f"  Requested device mode: {workflow.config.device}")
-    print(f"  Selected device: {workflow.device_name}")
-    if workflow.selection_errors:
-        print("  Fallback notes:")
-        for error in workflow.selection_errors:
-            print(f"    {error}")
+    print(f"  Required device: {workflow.device_name}")
     print()
 
     print("Problem:")
@@ -111,22 +97,7 @@ def print_runtime_summary(workflow: BaselineWorkflow, params: pnp.ndarray) -> No
     print(f"  Gate types: {format_gate_types(resources.gate_types)}")
     print()
 
-
-def _fresh_params(config: BaselineConfig) -> pnp.ndarray:
-    return make_initial_params(
-        num_qubits=config.num_qubits,
-        layers=config.layers,
-        seed=config.seed,
-        init_scale=config.init_scale,
-    )
-
-
-def _apply_gradient_step(params: pnp.ndarray, grad: np.ndarray, stepsize: float) -> pnp.ndarray:
-    updated = np.asarray(params) - stepsize * np.asarray(grad)
-    return pnp.array(updated, requires_grad=True)
-
-
-def _print_result_summary(result: TrainingRunResult, config: BaselineConfig) -> None:
+def _print_result_summary(result: TrainingRunResult, config: RunConfig) -> None:
     timings = result.timings
     avg_grad_s = timings.gradient_wall_s / config.steps if config.steps else 0.0
     avg_step_s = timings.measured_loop_s / config.steps if config.steps else 0.0
@@ -150,20 +121,21 @@ def _print_result_summary(result: TrainingRunResult, config: BaselineConfig) -> 
         print_gpu_telemetry_summary(result.gpu_telemetry_summary, indent="  ")
 
 
-def run_baseline(config: BaselineConfig) -> TrainingRunResult:
-    """Run the end-to-end PennyLane adjoint-diff baseline."""
+def run_pennylane(config: RunConfig) -> TrainingRunResult:
+    """Run the end-to-end PennyLane workflow."""
+    if config.backend != "pennylane":
+        raise ValueError(f"run_pennylane expected backend='pennylane', got {config.backend!r}.")
     validate_common_run_args(
         num_qubits=config.num_qubits,
         layers=config.layers,
         steps=config.steps,
-        report_every=config.report_every,
         telemetry_interval_s=config.telemetry_interval_s,
     )
-    workflow = create_workflow(config)
-    params = _fresh_params(config)
+    workflow = create_pennylane_workflow(config)
+    params = make_initial_params(config)
 
     if config.verbose:
-        print_runtime_summary(workflow, params)
+        print_pennylane_runtime_summary(workflow, params)
         if config.gpu_telemetry:
             print(
                 "GPU telemetry: "
@@ -176,12 +148,17 @@ def run_baseline(config: BaselineConfig) -> TrainingRunResult:
             params,
             steps=config.steps,
             stepsize=config.stepsize,
-            report_every=config.report_every,
-            grad_fn=lambda current: np.asarray(workflow.gradient_fn(current), dtype=np.float64),
-            energy_fn=lambda current: float(workflow.energy_qnode(current)),
-            apply_gradient_step=_apply_gradient_step,
+            grad_fn=lambda current: np.asarray(
+                workflow.gradient_fn(as_pennylane_params(current)),
+                dtype=np.float64,
+            ),
+            energy_fn=lambda current: float(workflow.energy_qnode(as_pennylane_params(current))),
+            apply_gradient_step=apply_gradient_step,
             verbose=config.verbose,
             one_based_steps=True,
+            show_progress=config.show_progress and not config.report_steps,
+            report_steps=config.report_steps,
+            report_energy_before_step=config.report_steps,
             format_step=(
                 lambda metric: (
                     f"Step {metric.step:>3}: "
@@ -194,7 +171,7 @@ def run_baseline(config: BaselineConfig) -> TrainingRunResult:
         )
 
         final_readout_start = time.perf_counter()
-        final_energy = float(workflow.energy_qnode(loop.final_params))
+        final_energy = float(workflow.energy_qnode(as_pennylane_params(loop.final_params)))
         final_readout_s = time.perf_counter() - final_readout_start
 
         return TrainingRunResult(
@@ -209,9 +186,7 @@ def run_baseline(config: BaselineConfig) -> TrainingRunResult:
                 total_compute_s=loop.measured_loop_s + final_readout_s,
             ),
             metadata={
-                "requested_device_mode": config.device,
                 "selected_device": workflow.device_name,
-                "selection_errors": workflow.selection_errors,
             },
         )
 
@@ -219,7 +194,7 @@ def run_baseline(config: BaselineConfig) -> TrainingRunResult:
         enabled=config.gpu_telemetry,
         interval_s=config.telemetry_interval_s,
         live=config.telemetry_live,
-        label="PennyLane baseline telemetry",
+        label="PennyLane telemetry",
         body=_run_body,
     )
     result.gpu_telemetry_summary = telemetry_summary
@@ -228,3 +203,12 @@ def run_baseline(config: BaselineConfig) -> TrainingRunResult:
         _print_result_summary(result, config)
 
     return result
+
+__all__ = [
+    "PennyLaneResult",
+    "PennyLaneWorkflow",
+    "TimingBreakdown",
+    "create_pennylane_workflow",
+    "print_pennylane_runtime_summary",
+    "run_pennylane",
+]

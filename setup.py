@@ -295,7 +295,7 @@ ext_modules = [
 setup(
     name="standalone-ring-ising-backend",
     version="0.1.0",
-    description="Minimal standalone CUDA backend for the ring Ising adjoint workflow.",
+    description="Ring-Ising demo with unified PennyLane and standalone backend frontends.",
     packages=find_packages(
         include=[
             "ring_ising",
@@ -305,8 +305,7 @@ setup(
         ]
     ),
     py_modules=[
-        "run_pennylane_baseline",
-        "run_standalone_backend",
+        "run_workflow",
     ],
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildCudaExtension},

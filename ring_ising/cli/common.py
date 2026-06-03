@@ -1,10 +1,10 @@
-"""Shared CLI helpers for the PennyLane and standalone entry scripts."""
+"""Shared CLI helpers for the unified workflow runner."""
 
 from __future__ import annotations
 
 import argparse
 
-from ring_ising.runtime import DEVICE_CANDIDATES, GpuTelemetryMonitor
+from ring_ising.runtime import GpuTelemetryMonitor
 
 
 def add_problem_args(
@@ -30,7 +30,6 @@ def add_problem_args(
         help="Transverse-field Ising X-field strength.",
     )
 
-
 def add_optimization_args(
     parser: argparse.ArgumentParser,
     *,
@@ -38,7 +37,6 @@ def add_optimization_args(
     stepsize_default: float,
     seed_default: int,
     init_scale_default: float,
-    report_every_default: int,
 ) -> None:
     """Add common loop and initialization arguments."""
     parser.add_argument("--steps", type=int, default=steps_default, help="Measured gradient steps.")
@@ -61,27 +59,6 @@ def add_optimization_args(
         default=init_scale_default,
         help="Standard deviation for the initial parameter distribution.",
     )
-    parser.add_argument(
-        "--report-every",
-        type=int,
-        default=report_every_default,
-        help="Print a progress line every N measured steps.",
-    )
-
-
-def add_device_arg(
-    parser: argparse.ArgumentParser,
-    *,
-    default: str = "gpu",
-) -> None:
-    """Add the PennyLane device-selection argument."""
-    parser.add_argument(
-        "--device",
-        choices=tuple(DEVICE_CANDIDATES),
-        default=default,
-        help="Device mode: auto, gpu, cpu, or default.",
-    )
-
 
 def add_telemetry_args(
     parser: argparse.ArgumentParser,

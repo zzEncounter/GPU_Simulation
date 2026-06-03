@@ -8,8 +8,8 @@ import numpy as np
 import pennylane as qml
 from pennylane import numpy as pnp
 
+from ring_ising.backends.standalone import RingIsingAdjointBackend, StandaloneBackendConfig
 from ring_ising.models import build_ring_ising_hamiltonian, hardware_efficient_ring
-from standalone_backend import RingIsingAdjointBackend, RingIsingConfig
 
 
 class StandaloneBackendParityTest(unittest.TestCase):
@@ -21,7 +21,14 @@ class StandaloneBackendParityTest(unittest.TestCase):
         params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
 
         backend = RingIsingAdjointBackend(
-            RingIsingConfig(num_qubits=num_qubits, layers=layers, field=field)
+            StandaloneBackendConfig(
+                num_qubits=num_qubits,
+                layers=layers,
+                field=field,
+                gradient_strategy="save_param_states",
+                checkpoint_interval_ops=None,
+                gate_fusion=True,
+            )
         )
         standalone_energy, standalone_grad = backend.energy_and_grad(params)
 
@@ -48,20 +55,23 @@ class StandaloneBackendParityTest(unittest.TestCase):
         params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
 
         save_param_backend = RingIsingAdjointBackend(
-            RingIsingConfig(
+            StandaloneBackendConfig(
                 num_qubits=num_qubits,
                 layers=layers,
                 field=field,
                 gradient_strategy="save_param_states",
+                checkpoint_interval_ops=None,
+                gate_fusion=True,
             )
         )
         checkpoint_backend = RingIsingAdjointBackend(
-            RingIsingConfig(
+            StandaloneBackendConfig(
                 num_qubits=num_qubits,
                 layers=layers,
                 field=field,
                 gradient_strategy="checkpoint",
                 checkpoint_interval_ops=5,
+                gate_fusion=True,
             )
         )
 
@@ -70,41 +80,6 @@ class StandaloneBackendParityTest(unittest.TestCase):
 
         np.testing.assert_allclose(checkpoint_energy, save_param_energy, atol=1e-9, rtol=1e-9)
         np.testing.assert_allclose(checkpoint_grad, save_param_grad, atol=1e-8, rtol=1e-8)
-
-    def test_auto_strategy_matches_explicit_resolved_strategy(self) -> None:
-        num_qubits = 6
-        layers = 2
-        field = 1.0
-        rng = np.random.default_rng(654)
-        params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
-
-        auto_backend = RingIsingAdjointBackend(
-            RingIsingConfig(
-                num_qubits=num_qubits,
-                layers=layers,
-                field=field,
-                gradient_strategy="auto",
-            )
-        )
-
-        resolved = auto_backend.strategy_resolution.resolved_strategy
-        self.assertIn(resolved, {"save_param_states", "checkpoint"})
-        explicit_backend = RingIsingAdjointBackend(
-            RingIsingConfig(
-                num_qubits=num_qubits,
-                layers=layers,
-                field=field,
-                gradient_strategy=resolved,
-                checkpoint_interval_ops=auto_backend.strategy_resolution.checkpoint_interval_ops
-                if resolved == "checkpoint"
-                else None,
-            )
-        )
-
-        auto_energy, auto_grad = auto_backend.energy_and_grad(params)
-        explicit_energy, explicit_grad = explicit_backend.energy_and_grad(params)
-        np.testing.assert_allclose(auto_energy, explicit_energy, atol=1e-9, rtol=1e-9)
-        np.testing.assert_allclose(auto_grad, explicit_grad, atol=1e-8, rtol=1e-8)
 
     def test_dense_scan_matches_save_param_states(self) -> None:
         for num_qubits, layers, field, seed in (
@@ -116,19 +91,23 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
 
                 reference_backend = RingIsingAdjointBackend(
-                    RingIsingConfig(
+                    StandaloneBackendConfig(
                         num_qubits=num_qubits,
                         layers=layers,
                         field=field,
                         gradient_strategy="save_param_states",
+                        checkpoint_interval_ops=None,
+                        gate_fusion=True,
                     )
                 )
                 dense_backend = RingIsingAdjointBackend(
-                    RingIsingConfig(
+                    StandaloneBackendConfig(
                         num_qubits=num_qubits,
                         layers=layers,
                         field=field,
                         gradient_strategy="dense_scan",
+                        checkpoint_interval_ops=None,
+                        gate_fusion=True,
                     )
                 )
 

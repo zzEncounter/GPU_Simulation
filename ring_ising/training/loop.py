@@ -1,4 +1,4 @@
-"""Shared optimization-loop helpers for both baseline and standalone paths."""
+"""Shared optimization-loop helpers for both PennyLane and standalone paths."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Generic, TypeVar
 
 import numpy as np
+
+from ring_ising.config import DEFAULT_PROGRESS_PARTITIONS
 
 ParamsT = TypeVar("ParamsT")
 
@@ -32,20 +34,43 @@ class LoopResult(Generic[ParamsT]):
     measured_loop_s: float
 
 
-def _should_report_step(
+def _current_step_number(
     step: int,
-    total_steps: int,
-    report_every: int,
     *,
     one_based: bool,
-) -> bool:
+) -> int:
+    return step if one_based else step + 1
+
+
+def _progress_segment(
+    current_step: int,
+    total_steps: int,
+    *,
+    partitions: int,
+) -> int:
     if total_steps <= 0:
-        return False
-    current_step = step if one_based else step + 1
+        return 0
+    return min(
+        partitions,
+        max(1, ((current_step * partitions - 1) // total_steps) + 1),
+    )
+
+
+def _render_progress_line(
+    current_step: int,
+    total_steps: int,
+    *,
+    elapsed_s: float,
+    width: int = 24,
+) -> str:
+    if total_steps <= 0:
+        return "Progress [------------------------] 0/0"
+    ratio = current_step / total_steps
+    filled = min(width, int(round(width * ratio)))
+    bar = "#" * filled + "-" * (width - filled)
     return (
-        current_step == 1
-        or current_step == total_steps
-        or current_step % report_every == 0
+        f"\rProgress [{bar}] {current_step}/{total_steps} "
+        f"({100.0 * ratio:5.1f}%) elapsed={elapsed_s:.3f}s"
     )
 
 
@@ -54,13 +79,15 @@ def run_gradient_descent_loop_from_grad(
     *,
     steps: int,
     stepsize: float,
-    report_every: int,
     grad_fn: Callable[[ParamsT], np.ndarray],
     energy_fn: Callable[[ParamsT], float],
     apply_gradient_step: Callable[[ParamsT, np.ndarray, float], ParamsT],
     verbose: bool,
+    show_progress: bool,
+    report_steps: bool,
     one_based_steps: bool,
     format_step: Callable[[StepMetric], str],
+    report_energy_before_step: bool = False,
 ) -> LoopResult[ParamsT]:
     """Run a measured loop when gradient and energy evaluators are separate."""
 
@@ -69,8 +96,21 @@ def run_gradient_descent_loop_from_grad(
 
     loop_start = time.perf_counter()
     step_iter = range(1, steps + 1) if one_based_steps else range(steps)
+    last_progress_segment = 0
     for step in step_iter:
-        step_start = grad_start = time.perf_counter()
+        step_start = time.perf_counter()
+        current_step = _current_step_number(step, one_based=one_based_steps)
+        progress_segment = _progress_segment(
+            current_step,
+            steps,
+            partitions=DEFAULT_PROGRESS_PARTITIONS,
+        )
+        report_this_step = report_steps and progress_segment != last_progress_segment
+        energy: float | None = None
+        if report_this_step and report_energy_before_step:
+            energy = float(energy_fn(params))
+
+        grad_start = time.perf_counter()
         grad = np.asarray(grad_fn(params), dtype=np.float64)
         grad_wall_s = time.perf_counter() - grad_start
         gradient_wall_s += grad_wall_s
@@ -79,12 +119,13 @@ def run_gradient_descent_loop_from_grad(
         step_wall_s = time.perf_counter() - step_start
         grad_norm = float(np.linalg.norm(grad))
 
-        if _should_report_step(step, steps, report_every, one_based=one_based_steps):
-            energy = float(energy_fn(params))
+        if report_this_step:
+            if energy is None:
+                energy = float(energy_fn(params))
             step_wall_s = time.perf_counter() - step_start
             metric = StepMetric(
-                step=step,
-                energy=energy,
+                step=current_step,
+                energy=float(energy),
                 grad_norm=grad_norm,
                 grad_wall_s=grad_wall_s,
                 step_wall_s=step_wall_s,
@@ -92,6 +133,22 @@ def run_gradient_descent_loop_from_grad(
             step_metrics.append(metric)
             if verbose:
                 print(format_step(metric))
+
+        if verbose and show_progress and progress_segment != last_progress_segment:
+            print(
+                _render_progress_line(
+                    current_step,
+                    steps,
+                    elapsed_s=time.perf_counter() - loop_start,
+                ),
+                end="",
+                flush=True,
+            )
+
+        last_progress_segment = progress_segment
+
+    if verbose and show_progress and steps > 0:
+        print()
 
     return LoopResult(
         final_params=params,
@@ -106,10 +163,11 @@ def run_gradient_descent_loop_from_energy_grad(
     *,
     steps: int,
     stepsize: float,
-    report_every: int,
     energy_grad_fn: Callable[[ParamsT], tuple[float, np.ndarray] | tuple[float, np.ndarray, Any]],
     apply_gradient_step: Callable[[ParamsT, np.ndarray, float], ParamsT],
     verbose: bool,
+    show_progress: bool,
+    report_steps: bool,
     one_based_steps: bool,
     format_step: Callable[[StepMetric], str],
     on_step_aux: Callable[[Any], None] | None = None,
@@ -121,8 +179,15 @@ def run_gradient_descent_loop_from_energy_grad(
 
     loop_start = time.perf_counter()
     step_iter = range(1, steps + 1) if one_based_steps else range(steps)
+    last_progress_segment = 0
     for step in step_iter:
         step_start = grad_start = time.perf_counter()
+        current_step = _current_step_number(step, one_based=one_based_steps)
+        progress_segment = _progress_segment(
+            current_step,
+            steps,
+            partitions=DEFAULT_PROGRESS_PARTITIONS,
+        )
         raw = energy_grad_fn(params)
         aux = None
         if len(raw) == 3:
@@ -139,9 +204,9 @@ def run_gradient_descent_loop_from_energy_grad(
         step_wall_s = time.perf_counter() - step_start
         grad_norm = float(np.linalg.norm(grad))
 
-        if _should_report_step(step, steps, report_every, one_based=one_based_steps):
+        if report_steps and progress_segment != last_progress_segment:
             metric = StepMetric(
-                step=step,
+                step=current_step,
                 energy=float(energy),
                 grad_norm=grad_norm,
                 grad_wall_s=grad_wall_s,
@@ -150,6 +215,22 @@ def run_gradient_descent_loop_from_energy_grad(
             step_metrics.append(metric)
             if verbose:
                 print(format_step(metric))
+
+        if verbose and show_progress and progress_segment != last_progress_segment:
+            print(
+                _render_progress_line(
+                    current_step,
+                    steps,
+                    elapsed_s=time.perf_counter() - loop_start,
+                ),
+                end="",
+                flush=True,
+            )
+
+        last_progress_segment = progress_segment
+
+    if verbose and show_progress and steps > 0:
+        print()
 
     return LoopResult(
         final_params=params,
