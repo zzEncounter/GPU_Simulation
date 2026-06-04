@@ -7,7 +7,6 @@ from .loop import (
     run_gradient_descent_loop,
 )
 from .result import (
-    LoopTimingBreakdown,
     TrainingRunResult,
     run_with_optional_telemetry,
     validate_common_run_args,
@@ -15,7 +14,6 @@ from .result import (
 
 __all__ = [
     "LoopResult",
-    "LoopTimingBreakdown",
     "StepEvaluation",
     "StepMetric",
     "TrainingRunResult",

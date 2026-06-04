@@ -12,7 +12,6 @@ from ring_ising.cli.common import format_telemetry_banner
 from ring_ising.config import RunConfig
 from ring_ising.runtime import print_gpu_telemetry_summary
 from ring_ising.training import (
-    LoopTimingBreakdown,
     StepEvaluation,
     TrainingRunResult,
     run_gradient_descent_loop,
@@ -131,7 +130,7 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
             final_params=np.asarray(loop.final_params, dtype=np.float64),
             final_energy=float(final_energy),
             step_metrics=loop.step_metrics,
-            timings=LoopTimingBreakdown(wall_s=total_wall_s),
+            wall_s=total_wall_s,
             metadata={
                 "gradient_strategy": workflow.backend.gradient_strategy,
                 "checkpoint_interval_ops": workflow.backend.checkpoint_interval_ops,
@@ -161,7 +160,5 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
 __all__ = [
     "StandaloneResult",
     "StandaloneWorkflow",
-    "create_standalone_workflow",
-    "print_standalone_runtime_summary",
     "run_standalone",
 ]

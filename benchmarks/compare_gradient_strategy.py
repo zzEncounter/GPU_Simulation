@@ -148,7 +148,7 @@ def main() -> None:
                     "layers": case.layers,
                     "steps": steps,
                     "mode": mode,
-                    "avg_step_ms": result.timings.wall_s * 1000.0 / steps,
+                    "avg_step_ms": result.wall_s * 1000.0 / steps,
                     "final_energy": float(result.final_energy),
                 }
             )

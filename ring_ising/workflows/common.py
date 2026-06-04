@@ -42,11 +42,11 @@ def print_problem_summary(config: RunConfig, params: np.ndarray) -> None:
 
 def print_result_summary(result: TrainingRunResult, config: RunConfig) -> None:
     """Print the common run summary shared by both backends."""
-    avg_step_s = result.timings.wall_s / config.steps if config.steps else 0.0
+    avg_step_s = result.wall_s / config.steps if config.steps else 0.0
 
     print()
     print("Summary:")
     print(f"  Final energy: {result.final_energy:.10f}")
     if config.steps:
         print(f"  Average step time: {1000.0 * avg_step_s:.3f} ms")
-    print(f"  Total wall time: {result.timings.wall_s:.4f} s")
+    print(f"  Total wall time: {result.wall_s:.4f} s")

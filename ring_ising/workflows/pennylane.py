@@ -20,7 +20,6 @@ from ring_ising.runtime import (
     print_gpu_telemetry_summary,
 )
 from ring_ising.training import (
-    LoopTimingBreakdown,
     StepEvaluation,
     TrainingRunResult,
     run_gradient_descent_loop,
@@ -47,7 +46,6 @@ class PennyLaneWorkflow:
 
 
 PennyLaneResult = TrainingRunResult
-TimingBreakdown = LoopTimingBreakdown
 
 
 def create_pennylane_workflow(config: RunConfig) -> PennyLaneWorkflow:
@@ -155,7 +153,7 @@ def run_pennylane(config: RunConfig) -> TrainingRunResult:
             final_params=np.asarray(loop.final_params, dtype=np.float64),
             final_energy=final_energy,
             step_metrics=loop.step_metrics,
-            timings=LoopTimingBreakdown(wall_s=total_wall_s),
+            wall_s=total_wall_s,
             metadata={
                 "device": workflow.device_name,
             },
@@ -183,6 +181,5 @@ def run_pennylane(config: RunConfig) -> TrainingRunResult:
 __all__ = [
     "PennyLaneResult",
     "PennyLaneWorkflow",
-    "TimingBreakdown",
     "run_pennylane",
 ]

@@ -20,7 +20,6 @@ class StepMetric:
     step: int
     energy: float
     grad_norm: float
-    grad_wall_s: float
     step_wall_s: float
 
 
@@ -92,7 +91,7 @@ def run_gradient_descent_loop(
     loop_start = time.perf_counter()
     last_progress_segment = 0
     for current_step in range(1, steps + 1):
-        step_start = grad_start = time.perf_counter()
+        step_start = time.perf_counter()
         progress_segment = _progress_segment(
             current_step,
             steps,
@@ -102,8 +101,6 @@ def run_gradient_descent_loop(
 
         evaluation = step_fn(params)
         grad = np.asarray(evaluation.grad, dtype=np.float64)
-        grad_wall_s = time.perf_counter() - grad_start
-
         params = apply_gradient_step(params, grad, stepsize)
         step_wall_s = time.perf_counter() - step_start
         grad_norm = float(np.linalg.norm(grad))
@@ -113,7 +110,6 @@ def run_gradient_descent_loop(
                 step=current_step,
                 energy=float(evaluation.energy),
                 grad_norm=grad_norm,
-                grad_wall_s=grad_wall_s,
                 step_wall_s=step_wall_s,
             )
             step_metrics.append(metric)

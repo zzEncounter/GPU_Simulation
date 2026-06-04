@@ -14,13 +14,6 @@ from ring_ising.runtime import GpuTelemetrySummary
 ResultT = TypeVar("ResultT")
 
 
-@dataclass(frozen=True)
-class LoopTimingBreakdown:
-    """Timing summary for one measured training run."""
-
-    wall_s: float
-
-
 @dataclass
 class TrainingRunResult:
     """High-level outputs shared by both PennyLane and standalone workflows."""
@@ -29,7 +22,7 @@ class TrainingRunResult:
     final_params: np.ndarray
     final_energy: float
     step_metrics: tuple[StepMetric, ...]
-    timings: LoopTimingBreakdown
+    wall_s: float
     gpu_telemetry_summary: GpuTelemetrySummary | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

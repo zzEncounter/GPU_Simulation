@@ -5,7 +5,6 @@ from __future__ import annotations
 __all__ = [
     "BACKENDS",
     "DEFAULT_PROGRESS_PARTITIONS",
-    "LoopTimingBreakdown",
     "PennyLaneResult",
     "PennyLaneWorkflow",
     "RunConfig",
@@ -66,16 +65,10 @@ def __getattr__(name: str):
         }
         return namespace[name]
 
-    if name in {
-        "LoopTimingBreakdown",
-        "StepEvaluation",
-        "StepMetric",
-        "TrainingRunResult",
-    }:
-        from .training import LoopTimingBreakdown, StepEvaluation, StepMetric, TrainingRunResult
+    if name in {"StepEvaluation", "StepMetric", "TrainingRunResult"}:
+        from .training import StepEvaluation, StepMetric, TrainingRunResult
 
         namespace = {
-            "LoopTimingBreakdown": LoopTimingBreakdown,
             "StepEvaluation": StepEvaluation,
             "StepMetric": StepMetric,
             "TrainingRunResult": TrainingRunResult,
