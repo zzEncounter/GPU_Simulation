@@ -20,22 +20,11 @@ namespace {
 using detail::Complex;
 template <typename T> using DeviceBuffer = detail::DeviceBuffer<T>;
 
-enum class OpKind { RY, RZ, CNOT, FusedRYRZ, RingCNOTLayer };
 enum class GradientStrategy {
     SaveParamStates,
     Checkpoint,
-    DenseScan
-};
-
-struct OpDesc {
-    OpKind kind;
-    std::size_t wire0;
-    std::size_t wire1;
-    double theta0;
-    double theta1;
-    std::size_t param_index0;
-    std::size_t param_index1;
-    bool is_parametric;
+    DenseScan,
+    IntrablockParallel
 };
 
 auto build_ring_ops(std::size_t num_qubits, std::size_t num_layers,
@@ -179,12 +168,15 @@ auto parse_gradient_strategy(const std::string &strategy)
     if (strategy == "dense_scan") {
         return GradientStrategy::DenseScan;
     }
+    if (strategy == "intrablock_parallel") {
+        return GradientStrategy::IntrablockParallel;
+    }
     if (strategy == "bruteforce_parallel_q6") {
         return GradientStrategy::DenseScan;
     }
     throw std::invalid_argument(
         "Unknown gradient strategy. Expected one of: "
-        "save_param_states, checkpoint, dense_scan.");
+        "save_param_states, checkpoint, dense_scan, intrablock_parallel.");
 }
 
 struct CublasHandle {
@@ -241,6 +233,8 @@ struct RingIsingCudaBackend::Impl {
     std::size_t state_size;
     std::size_t num_ops;
     std::size_t checkpoint_interval_ops;
+    std::size_t intrablock_block_size;
+    std::size_t intrablock_num_blocks;
     std::size_t num_chunks;
     GradientStrategy strategy;
     bool fuse_ring_cnot_layer;
@@ -272,11 +266,19 @@ struct RingIsingCudaBackend::Impl {
     std::vector<Complex> dense_hamiltonian_host;
     std::vector<Complex> dense_psi0_host;
     bool dense_static_device_uploaded{false};
+    DeviceBuffer<OpDesc> intrablock_ops;
+    DeviceBuffer<Complex> intrablock_block_mats;
+    DeviceBuffer<Complex> intrablock_block_mat_scratch;
+    DeviceBuffer<Complex> intrablock_boundary_states;
+    DeviceBuffer<Complex> intrablock_lambda_boundaries;
+    DeviceBuffer<Complex> intrablock_forward_states;
+    DeviceBuffer<double> intrablock_gradients;
 
     Impl(std::size_t num_qubits_, std::size_t num_layers_, double field_,
          const std::string &gradient_strategy_,
          bool fuse_ring_cnot_layer_,
-         std::size_t checkpoint_interval_ops_)
+         std::size_t checkpoint_interval_ops_,
+         std::size_t intrablock_block_size_)
         : num_qubits(num_qubits_), num_layers(num_layers_), field(field_),
           expected_params(num_qubits_ * num_layers_ * 2),
           state_size(validate_and_get_state_size(num_qubits_, num_layers_,
@@ -284,7 +286,11 @@ struct RingIsingCudaBackend::Impl {
           num_ops(fuse_ring_cnot_layer_
                       ? num_layers_ * (num_qubits_ + 1)
                       : 2 * num_qubits_ * num_layers_),
-          checkpoint_interval_ops(checkpoint_interval_ops_), num_chunks(0),
+          checkpoint_interval_ops(checkpoint_interval_ops_),
+          intrablock_block_size(intrablock_block_size_ == 0
+                                    ? std::size_t{64}
+                                    : intrablock_block_size_),
+          intrablock_num_blocks(0), num_chunks(0),
           strategy(parse_gradient_strategy(gradient_strategy_)),
           fuse_ring_cnot_layer(fuse_ring_cnot_layer_),
           current(state_size), lambda(state_size), deriv(state_size),
@@ -301,6 +307,9 @@ struct RingIsingCudaBackend::Impl {
                          checkpoint_interval_ops;
             checkpoints.allocate((num_chunks + 1) * state_size);
             local_states.allocate((checkpoint_interval_ops + 1) * state_size);
+        } else if (strategy == GradientStrategy::IntrablockParallel) {
+            intrablock_num_blocks =
+                (num_ops + intrablock_block_size - 1) / intrablock_block_size;
         }
     }
 };
@@ -308,22 +317,31 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
                                          const double *params,
                                          std::size_t num_params)
     -> EnergyGradResult;
+auto run_intrablock_parallel_energy_and_grad(RingIsingCudaBackend::Impl &impl,
+                                             const double *params,
+                                             std::size_t num_params,
+                                             bool compute_gradient)
+    -> EnergyGradResult;
 
 
 #include "ising_cuda_statevector_modes.inc"
 
 #include "ising_cuda_dense_modes.inc"
 
+#include "ising_cuda_intrablock_modes.inc"
+
 RingIsingCudaBackend::RingIsingCudaBackend(std::size_t num_qubits,
                                            std::size_t num_layers,
                                            double field,
                                            const std::string &gradient_strategy,
                                            bool fuse_ring_cnot_layer,
-                                           std::size_t checkpoint_interval_ops)
+                                           std::size_t checkpoint_interval_ops,
+                                           std::size_t intrablock_block_size)
     : impl_(std::make_unique<Impl>(num_qubits, num_layers, field,
                                    gradient_strategy,
                                    fuse_ring_cnot_layer,
-                                   checkpoint_interval_ops)) {}
+                                   checkpoint_interval_ops,
+                                   intrablock_block_size)) {}
 
 RingIsingCudaBackend::~RingIsingCudaBackend() = default;
 
@@ -347,11 +365,13 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  bool fuse_ring_cnot_layer,
                                  const double *params, std::size_t num_params,
                                  std::size_t checkpoint_interval_ops,
+                                 std::size_t intrablock_block_size,
                                  bool compute_gradient) {
     RingIsingCudaBackend backend(num_qubits, num_layers, field,
                                  gradient_strategy,
                                  fuse_ring_cnot_layer,
-                                 checkpoint_interval_ops);
+                                 checkpoint_interval_ops,
+                                 intrablock_block_size);
     return backend.energy_and_grad(params, num_params, compute_gradient);
 }
 

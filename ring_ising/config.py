@@ -9,6 +9,7 @@ STANDALONE_GRADIENT_STRATEGIES = (
     "save_param_states",
     "checkpoint",
     "dense_scan",
+    "intrablock_parallel",
 )
 DEFAULT_PROGRESS_PARTITIONS = 60
 
@@ -33,4 +34,5 @@ class RunConfig:
     telemetry_live: bool = False
     gradient_strategy: str = "save_param_states"
     checkpoint_interval_ops: int | None = None
+    intrablock_block_size: int | None = None
     gate_fusion: bool = True

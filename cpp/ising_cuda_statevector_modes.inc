@@ -100,6 +100,10 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
     if (impl.strategy == GradientStrategy::DenseScan) {
         return run_dense_scan_energy_and_grad_fast(impl, params, num_params);
     }
+    if (impl.strategy == GradientStrategy::IntrablockParallel) {
+        return run_intrablock_parallel_energy_and_grad(impl, params, num_params,
+                                                       compute_gradient);
+    }
 
     const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
                                     impl.fuse_ring_cnot_layer);

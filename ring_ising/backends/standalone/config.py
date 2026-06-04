@@ -23,6 +23,7 @@ class StandaloneBackendConfig:
     field: float
     gradient_strategy: str
     checkpoint_interval_ops: int | None
+    intrablock_block_size: int | None
     gate_fusion: bool
 
     @property
@@ -66,13 +67,23 @@ class StandaloneBackendConfig:
         strategy = normalize_strategy_name(
             self.gradient_strategy if strategy is None else strategy
         )
-        if strategy in {"save_param_states", "dense_scan"}:
+        if strategy in {"save_param_states", "dense_scan", "intrablock_parallel"}:
             return 0
         if self.num_ops <= 1:
             return 0
         if self.checkpoint_interval_ops is not None:
             return max(1, min(int(self.checkpoint_interval_ops), self.num_ops - 1))
         return self.default_checkpoint_interval_ops()
+
+    def resolve_intrablock_block_size(self, strategy: str | None = None) -> int:
+        strategy = normalize_strategy_name(
+            self.gradient_strategy if strategy is None else strategy
+        )
+        if strategy != "intrablock_parallel":
+            return 0
+        if self.intrablock_block_size is not None:
+            return max(1, int(self.intrablock_block_size))
+        return 64
 
     def estimated_gradient_state_buffers_for(
         self, strategy: str, checkpoint_interval_ops: int | None = None
@@ -83,9 +94,13 @@ class StandaloneBackendConfig:
         if strategy == "dense_scan":
             padded = 1 << (self.num_ops - 1).bit_length() if self.num_ops > 0 else 1
             return 3 * padded + max(self.num_ops + 1, padded) + 3
+        if strategy == "intrablock_parallel":
+            block_size = self.resolve_intrablock_block_size(strategy)
+            num_blocks = int(math.ceil(self.num_ops / block_size)) if self.num_ops > 0 else 0
+            return (num_blocks + 1) * 2 + num_blocks * (block_size + 1) + 4
         if strategy != "checkpoint":
             raise ValueError(
-                "strategy must be 'save_param_states', 'checkpoint', or 'dense_scan'."
+                "strategy must be 'save_param_states', 'checkpoint', 'dense_scan', or 'intrablock_parallel'."
             )
         interval = (
             self.resolve_checkpoint_interval_ops("checkpoint")
@@ -123,6 +138,18 @@ class StandaloneBackendConfig:
                 + self.num_params * (8 + 4)
             )
             return bytes_total / (1024**3)
+        if strategy == "intrablock_parallel":
+            block_size = self.resolve_intrablock_block_size(strategy)
+            num_blocks = int(math.ceil(self.num_ops / block_size)) if self.num_ops > 0 else 0
+            matrix_count = 2 * num_blocks
+            vector_count = 2 * (num_blocks + 1) + num_blocks * (block_size + 1) + 4
+            bytes_total = (
+                matrix_count * self.dense_matrix_nbytes
+                + vector_count * self.statevector_nbytes
+                + self.num_ops * 56
+                + self.num_params * 8
+            )
+            return bytes_total / (1024**3)
         return (
             self.estimated_gradient_state_buffers_for(strategy, checkpoint_interval_ops)
             * self.statevector_nbytes
@@ -137,9 +164,11 @@ class StandaloneBackendConfig:
             raise ValueError("layers must be at least 1.")
         if strategy not in STANDALONE_GRADIENT_STRATEGIES:
             raise ValueError(
-                "gradient_strategy must be 'save_param_states', 'checkpoint', or 'dense_scan'."
+                "gradient_strategy must be 'save_param_states', 'checkpoint', 'dense_scan', or 'intrablock_parallel'."
             )
         if strategy == "dense_scan" and self.num_qubits > 6:
             raise ValueError("dense_scan requires num_qubits <= 6.")
         if self.checkpoint_interval_ops is not None and self.checkpoint_interval_ops < 1:
             raise ValueError("checkpoint_interval_ops must be positive when provided.")
+        if self.intrablock_block_size is not None and self.intrablock_block_size < 1:
+            raise ValueError("intrablock_block_size must be positive when provided.")

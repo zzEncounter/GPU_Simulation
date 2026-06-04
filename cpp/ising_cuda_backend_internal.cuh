@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -10,6 +11,20 @@
 #include <thrust/complex.h>
 
 namespace standalone_backend {
+
+enum class OpKind : int { RY, RZ, CNOT, FusedRYRZ, RingCNOTLayer };
+
+struct OpDesc {
+    OpKind kind;
+    std::size_t wire0;
+    std::size_t wire1;
+    double theta0;
+    double theta1;
+    std::size_t param_index0;
+    std::size_t param_index1;
+    bool is_parametric;
+};
+
 namespace detail {
 
 using Complex = thrust::complex<double>;
@@ -114,6 +129,21 @@ void launch_fused_dense_gradient_tail(const Complex *gate_mats,
                                       const Complex *eta_before, double *out,
                                       std::size_t num_params,
                                       std::size_t vector_size);
+
+void launch_build_block_matrices(const OpDesc *ops, std::size_t num_blocks,
+                                 std::size_t block_size, std::size_t num_ops,
+                                 std::size_t num_qubits, std::size_t dim,
+                                 Complex *block_mats, Complex *scratch_mats);
+void launch_simulate_blocks_forward(const OpDesc *ops, std::size_t num_blocks,
+                                    std::size_t block_size, std::size_t num_ops,
+                                    std::size_t num_qubits, std::size_t dim,
+                                    const Complex *boundary_states,
+                                    Complex *forward_states);
+void launch_simulate_blocks_backward_and_gradient(
+    const OpDesc *ops, std::size_t num_blocks, std::size_t block_size,
+    std::size_t num_ops, std::size_t num_qubits, std::size_t dim,
+    const Complex *lambda_boundaries, const Complex *forward_states,
+    double *out_gradients);
 
 } // namespace detail
 } // namespace standalone_backend

@@ -40,6 +40,7 @@ def _to_backend_config(config: RunConfig) -> StandaloneBackendConfig:
         field=config.field,
         gradient_strategy=config.gradient_strategy,
         checkpoint_interval_ops=config.checkpoint_interval_ops,
+        intrablock_block_size=config.intrablock_block_size,
         gate_fusion=config.gate_fusion,
     )
 
@@ -61,6 +62,11 @@ def print_standalone_runtime_summary(workflow: StandaloneWorkflow, params: np.nd
     print(f"  Gate fusion enabled: {config.gate_fusion}")
     if workflow.backend.gradient_strategy == "checkpoint":
         print(f"  Effective checkpoint interval: {workflow.backend.checkpoint_interval_ops} ops")
+    if workflow.backend.gradient_strategy == "intrablock_parallel":
+        print(
+            "  Effective intrablock block size: "
+            f"{workflow.backend.intrablock_block_size} ops"
+        )
     print(
         "  Estimated gradient workspace: "
         f"{workflow.backend.estimated_workspace_gib:.2f} GiB"
@@ -134,6 +140,7 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
             metadata={
                 "gradient_strategy": workflow.backend.gradient_strategy,
                 "checkpoint_interval_ops": workflow.backend.checkpoint_interval_ops,
+                "intrablock_block_size": workflow.backend.intrablock_block_size,
                 "estimated_workspace_gib": workflow.backend.estimated_workspace_gib,
                 "gate_fusion": config.gate_fusion,
             },
