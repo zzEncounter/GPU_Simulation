@@ -141,11 +141,9 @@ class StandaloneBackendConfig:
         if strategy == "intrablock_parallel":
             block_size = self.resolve_intrablock_block_size(strategy)
             num_blocks = int(math.ceil(self.num_ops / block_size)) if self.num_ops > 0 else 0
-            matrix_count = 2 * num_blocks
             vector_count = 2 * (num_blocks + 1) + num_blocks * (block_size + 1) + 4
             bytes_total = (
-                matrix_count * self.dense_matrix_nbytes
-                + vector_count * self.statevector_nbytes
+                vector_count * self.statevector_nbytes
                 + self.num_ops * 56
                 + self.num_params * 8
             )

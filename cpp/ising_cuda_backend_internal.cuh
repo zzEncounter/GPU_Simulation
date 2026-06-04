@@ -130,10 +130,6 @@ void launch_fused_dense_gradient_tail(const Complex *gate_mats,
                                       std::size_t num_params,
                                       std::size_t vector_size);
 
-void launch_build_block_matrices(const OpDesc *ops, std::size_t num_blocks,
-                                 std::size_t block_size, std::size_t num_ops,
-                                 std::size_t num_qubits, std::size_t dim,
-                                 Complex *block_mats, Complex *scratch_mats);
 void launch_simulate_blocks_forward(const OpDesc *ops, std::size_t num_blocks,
                                     std::size_t block_size, std::size_t num_ops,
                                     std::size_t num_qubits, std::size_t dim,

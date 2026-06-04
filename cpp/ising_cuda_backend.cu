@@ -267,8 +267,6 @@ struct RingIsingCudaBackend::Impl {
     std::vector<Complex> dense_psi0_host;
     bool dense_static_device_uploaded{false};
     DeviceBuffer<OpDesc> intrablock_ops;
-    DeviceBuffer<Complex> intrablock_block_mats;
-    DeviceBuffer<Complex> intrablock_block_mat_scratch;
     DeviceBuffer<Complex> intrablock_boundary_states;
     DeviceBuffer<Complex> intrablock_lambda_boundaries;
     DeviceBuffer<Complex> intrablock_forward_states;
