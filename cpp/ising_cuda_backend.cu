@@ -21,6 +21,7 @@ using detail::Complex;
 template <typename T> using DeviceBuffer = detail::DeviceBuffer<T>;
 
 enum class GradientStrategy {
+    InverseWalk,
     SaveParamStates,
     Checkpoint,
     DenseScan,
@@ -162,6 +163,9 @@ auto parse_gradient_strategy(const std::string &strategy)
     if (strategy == "save_param_states") {
         return GradientStrategy::SaveParamStates;
     }
+    if (strategy == "inverse_walk") {
+        return GradientStrategy::InverseWalk;
+    }
     if (strategy == "checkpoint") {
         return GradientStrategy::Checkpoint;
     }
@@ -176,7 +180,7 @@ auto parse_gradient_strategy(const std::string &strategy)
     }
     throw std::invalid_argument(
         "Unknown gradient strategy. Expected one of: "
-        "save_param_states, checkpoint, dense_scan, intrablock_parallel.");
+        "inverse_walk, save_param_states, checkpoint, dense_scan, intrablock_parallel.");
 }
 
 struct CublasHandle {

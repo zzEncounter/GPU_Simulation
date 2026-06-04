@@ -44,6 +44,7 @@
 
 梯度内存策略仅保留：
 
+- `inverse_walk`
 - `save_param_states`
 - `checkpoint`
 - `dense_scan`（实验模式，要求 `num_qubits <= 6`）
@@ -98,6 +99,7 @@ python -m venv .venv
 ```bash
 # 指定梯度策略
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy save_param_states
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy inverse_walk
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy checkpoint
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy dense_scan
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy intrablock_parallel
@@ -154,7 +156,7 @@ standalone_result = run(
 ```bash
 .venv/bin/python benchmarks/compare_gradient_strategy.py \
   --cases 4x8 5x32 6x128 \
-  --modes save_param_states checkpoint dense_scan intrablock_parallel \
+  --modes inverse_walk save_param_states checkpoint dense_scan intrablock_parallel \
   --reference-mode save_param_states
 ```
 

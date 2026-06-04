@@ -67,7 +67,12 @@ class StandaloneBackendConfig:
         strategy = normalize_strategy_name(
             self.gradient_strategy if strategy is None else strategy
         )
-        if strategy in {"save_param_states", "dense_scan", "intrablock_parallel"}:
+        if strategy in {
+            "inverse_walk",
+            "save_param_states",
+            "dense_scan",
+            "intrablock_parallel",
+        }:
             return 0
         if self.num_ops <= 1:
             return 0
@@ -89,6 +94,8 @@ class StandaloneBackendConfig:
         self, strategy: str, checkpoint_interval_ops: int | None = None
     ) -> int:
         strategy = normalize_strategy_name(strategy)
+        if strategy == "inverse_walk":
+            return 4
         if strategy == "save_param_states":
             return self.num_parametric_gates + 3
         if strategy == "dense_scan":
@@ -100,7 +107,7 @@ class StandaloneBackendConfig:
             return (num_blocks + 1) * 2 + num_blocks * (block_size + 1) + 4
         if strategy != "checkpoint":
             raise ValueError(
-                "strategy must be 'save_param_states', 'checkpoint', 'dense_scan', or 'intrablock_parallel'."
+                "strategy must be 'inverse_walk', 'save_param_states', 'checkpoint', 'dense_scan', or 'intrablock_parallel'."
             )
         interval = (
             self.resolve_checkpoint_interval_ops("checkpoint")
@@ -116,6 +123,8 @@ class StandaloneBackendConfig:
         self, strategy: str, checkpoint_interval_ops: int | None = None
     ) -> float:
         strategy = normalize_strategy_name(strategy)
+        if strategy == "inverse_walk":
+            return 4 * self.statevector_nbytes / (1024**3)
         if strategy == "dense_scan":
             if self.num_ops <= 0:
                 return 0.0
@@ -162,7 +171,7 @@ class StandaloneBackendConfig:
             raise ValueError("layers must be at least 1.")
         if strategy not in STANDALONE_GRADIENT_STRATEGIES:
             raise ValueError(
-                "gradient_strategy must be 'save_param_states', 'checkpoint', 'dense_scan', or 'intrablock_parallel'."
+                "gradient_strategy must be 'inverse_walk', 'save_param_states', 'checkpoint', 'dense_scan', or 'intrablock_parallel'."
             )
         if strategy == "dense_scan" and self.num_qubits > 6:
             raise ValueError("dense_scan requires num_qubits <= 6.")

@@ -19,8 +19,15 @@ CASES = (
     {"num_qubits": 6, "field": 1.1},
 )
 SEEDS = (123, 321, 2026)
-MODES = ("save_param_states", "checkpoint", "dense_scan", "intrablock_parallel")
+MODES = (
+    "inverse_walk",
+    "save_param_states",
+    "checkpoint",
+    "dense_scan",
+    "intrablock_parallel",
+)
 TOLERANCES = {
+    "inverse_walk": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "save_param_states": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "checkpoint": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "dense_scan": {"energy_atol": 1e-8, "grad_atol": 1e-7},
@@ -145,6 +152,37 @@ class StandaloneBackendParityTest(unittest.TestCase):
             reference_grad,
             atol=TOLERANCES["intrablock_parallel"]["grad_atol"],
             rtol=TOLERANCES["intrablock_parallel"]["grad_atol"],
+        )
+
+    def test_inverse_walk_matches_save_param_states_beyond_dense_scan_limit(self) -> None:
+        num_qubits = 8
+        field = 0.9
+        params = self._make_params(seed=2028, num_qubits=num_qubits)
+
+        reference_energy, reference_grad = self._standalone_result(
+            mode="save_param_states",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
+        )
+        inverse_energy, inverse_grad = self._standalone_result(
+            mode="inverse_walk",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
+        )
+
+        np.testing.assert_allclose(
+            inverse_energy,
+            reference_energy,
+            atol=TOLERANCES["inverse_walk"]["energy_atol"],
+            rtol=TOLERANCES["inverse_walk"]["energy_atol"],
+        )
+        np.testing.assert_allclose(
+            inverse_grad,
+            reference_grad,
+            atol=TOLERANCES["inverse_walk"]["grad_atol"],
+            rtol=TOLERANCES["inverse_walk"]["grad_atol"],
         )
 
 
