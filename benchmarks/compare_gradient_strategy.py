@@ -148,8 +148,7 @@ def main() -> None:
                     "layers": case.layers,
                     "steps": steps,
                     "mode": mode,
-                    "avg_step_ms": result.timings.measured_loop_s * 1000.0 / steps,
-                    "avg_grad_wall_ms": result.timings.gradient_wall_s * 1000.0 / steps,
+                    "avg_step_ms": result.timings.wall_s * 1000.0 / steps,
                     "final_energy": float(result.final_energy),
                 }
             )
@@ -191,7 +190,6 @@ def main() -> None:
                     "steps",
                     "mode",
                     "avg_step_ms",
-                    "avg_grad_wall_ms",
                     "speedup_vs_reference",
                     "final_energy",
                     "final_energy_abs_diff_vs_reference",

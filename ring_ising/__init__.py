@@ -13,14 +13,12 @@ __all__ = [
     "StandaloneBackendConfig",
     "StandaloneResult",
     "StandaloneWorkflow",
+    "StepEvaluation",
     "StepMetric",
     "TrainingRunResult",
     "RingIsingAdjointBackend",
     "apply_ring_layer",
     "build_ring_ising_hamiltonian",
-    "create_backend_workflow",
-    "create_pennylane_workflow",
-    "create_standalone_workflow",
     "hardware_efficient_ring",
     "run",
     "run_pennylane",
@@ -68,42 +66,37 @@ def __getattr__(name: str):
         }
         return namespace[name]
 
-    if name in {"LoopTimingBreakdown", "StepMetric", "TrainingRunResult"}:
-        from .training import LoopTimingBreakdown, StepMetric, TrainingRunResult
+    if name in {
+        "LoopTimingBreakdown",
+        "StepEvaluation",
+        "StepMetric",
+        "TrainingRunResult",
+    }:
+        from .training import LoopTimingBreakdown, StepEvaluation, StepMetric, TrainingRunResult
 
         namespace = {
             "LoopTimingBreakdown": LoopTimingBreakdown,
+            "StepEvaluation": StepEvaluation,
             "StepMetric": StepMetric,
             "TrainingRunResult": TrainingRunResult,
         }
         return namespace[name]
 
-    if name in {"run", "create_backend_workflow"}:
-        from .workflows import create_workflow, run
+    if name == "run":
+        from .workflows import run
 
-        namespace = {
-            "create_backend_workflow": create_workflow,
-            "run": run,
-        }
-        return namespace[name]
+        return run
 
     if name in {
         "PennyLaneResult",
         "PennyLaneWorkflow",
-        "create_pennylane_workflow",
         "run_pennylane",
     }:
-        from .workflows.pennylane import (
-            PennyLaneResult,
-            PennyLaneWorkflow,
-            create_pennylane_workflow,
-            run_pennylane,
-        )
+        from .workflows.pennylane import PennyLaneResult, PennyLaneWorkflow, run_pennylane
 
         namespace = {
             "PennyLaneResult": PennyLaneResult,
             "PennyLaneWorkflow": PennyLaneWorkflow,
-            "create_pennylane_workflow": create_pennylane_workflow,
             "run_pennylane": run_pennylane,
         }
         return namespace[name]
@@ -123,20 +116,13 @@ def __getattr__(name: str):
     if name in {
         "StandaloneResult",
         "StandaloneWorkflow",
-        "create_standalone_workflow",
         "run_standalone",
     }:
-        from .workflows.standalone import (
-            StandaloneResult,
-            StandaloneWorkflow,
-            create_workflow,
-            run_standalone,
-        )
+        from .workflows.standalone import StandaloneResult, StandaloneWorkflow, run_standalone
 
         namespace = {
             "StandaloneResult": StandaloneResult,
             "StandaloneWorkflow": StandaloneWorkflow,
-            "create_standalone_workflow": create_workflow,
             "run_standalone": run_standalone,
         }
         return namespace[name]

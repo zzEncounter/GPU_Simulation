@@ -7,6 +7,7 @@ from pennylane import numpy as pnp
 
 from ring_ising.config import RunConfig
 from ring_ising.params import make_initial_params_array
+from ring_ising.training import TrainingRunResult
 
 
 def make_initial_params(config: RunConfig) -> np.ndarray:
@@ -27,3 +28,25 @@ def apply_gradient_step(params: np.ndarray, grad: np.ndarray, stepsize: float) -
 def as_pennylane_params(params: np.ndarray) -> pnp.ndarray:
     """Convert shared parameters into a PennyLane trainable tensor."""
     return pnp.array(np.asarray(params, dtype=np.float64), requires_grad=True)
+
+
+def print_problem_summary(config: RunConfig, params: np.ndarray) -> None:
+    """Print the common problem-definition summary."""
+    print("Problem:")
+    print(f"  Qubits: {config.num_qubits}")
+    print(f"  Layers: {config.layers}")
+    print(f"  Field strength: {config.field}")
+    print(f"  Parameter tensor shape: {tuple(np.asarray(params).shape)}")
+    print()
+
+
+def print_result_summary(result: TrainingRunResult, config: RunConfig) -> None:
+    """Print the common run summary shared by both backends."""
+    avg_step_s = result.timings.wall_s / config.steps if config.steps else 0.0
+
+    print()
+    print("Summary:")
+    print(f"  Final energy: {result.final_energy:.10f}")
+    if config.steps:
+        print(f"  Average step time: {1000.0 * avg_step_s:.3f} ms")
+    print(f"  Total wall time: {result.timings.wall_s:.4f} s")

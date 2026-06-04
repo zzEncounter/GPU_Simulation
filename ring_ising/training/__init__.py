@@ -2,9 +2,9 @@
 
 from .loop import (
     LoopResult,
+    StepEvaluation,
     StepMetric,
-    run_gradient_descent_loop_from_energy_grad,
-    run_gradient_descent_loop_from_grad,
+    run_gradient_descent_loop,
 )
 from .result import (
     LoopTimingBreakdown,
@@ -16,10 +16,10 @@ from .result import (
 __all__ = [
     "LoopResult",
     "LoopTimingBreakdown",
+    "StepEvaluation",
     "StepMetric",
     "TrainingRunResult",
-    "run_gradient_descent_loop_from_energy_grad",
-    "run_gradient_descent_loop_from_grad",
+    "run_gradient_descent_loop",
     "run_with_optional_telemetry",
     "validate_common_run_args",
 ]

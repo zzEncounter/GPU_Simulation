@@ -46,8 +46,8 @@ class TrainingWorkflowInterfaceTest(unittest.TestCase):
             )
         )
 
-        self.assertGreater(pennylane.timings.measured_loop_s, 0.0)
-        self.assertGreater(standalone.timings.measured_loop_s, 0.0)
+        self.assertGreater(pennylane.timings.wall_s, 0.0)
+        self.assertGreater(standalone.timings.wall_s, 0.0)
         self.assertAlmostEqual(pennylane.final_energy, standalone.final_energy, places=7)
         self.assertAlmostEqual(
             pennylane.step_metrics[0].energy,

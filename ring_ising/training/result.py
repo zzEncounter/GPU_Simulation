@@ -18,10 +18,7 @@ ResultT = TypeVar("ResultT")
 class LoopTimingBreakdown:
     """Timing summary for one measured training run."""
 
-    measured_loop_s: float
-    gradient_wall_s: float
-    final_readout_s: float
-    total_compute_s: float
+    wall_s: float
 
 
 @dataclass
