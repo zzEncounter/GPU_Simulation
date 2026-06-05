@@ -57,6 +57,13 @@ def parse_args() -> argparse.Namespace:
         help="Number of ops per checkpoint chunk. Only used with checkpoint strategy.",
     )
     parser.add_argument(
+        "--intrablock-block-size",
+        dest="intrablock_block_size",
+        type=int,
+        default=DEFAULT_RUN_CONFIG.intrablock_block_size,
+        help="Ops per block for intrablock_parallel. Only used with that strategy.",
+    )
+    parser.add_argument(
         "--disable-gate-fusion",
         dest="gate_fusion",
         action="store_false",

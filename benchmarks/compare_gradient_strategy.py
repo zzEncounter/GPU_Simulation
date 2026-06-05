@@ -67,6 +67,7 @@ def build_run_config(
         seed=args.seed,
         init_scale=args.init_scale,
         gradient_strategy=mode,
+        intrablock_block_size=args.intrablock_block_size,
         gate_fusion=args.gate_fusion,
         verbose=False,
         show_progress=False,
@@ -103,7 +104,7 @@ def parse_args() -> argparse.Namespace:
         "--modes",
         nargs="+",
         type=parse_mode,
-        default=["save_param_states", "dense_scan"],
+        default=["inverse_walk", "save_param_states", "dense_scan", "intrablock_parallel"],
         help="Standalone gradient strategies to compare.",
     )
     parser.add_argument(
@@ -116,6 +117,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stepsize", type=float, default=0.08)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--init-scale", type=float, default=0.3)
+    parser.add_argument(
+        "--intrablock-block-size",
+        type=int,
+        default=64,
+        help="Ops per block when benchmarking intrablock_parallel.",
+    )
     parser.add_argument(
         "--disable-gate-fusion",
         dest="gate_fusion",
@@ -135,6 +142,7 @@ def main() -> None:
     print(f"  Modes: {', '.join(args.modes)}")
     print(f"  Reference mode: {args.reference_mode}")
     print(f"  Gate fusion enabled: {args.gate_fusion}")
+    print(f"  Intrablock block size: {args.intrablock_block_size}")
     print()
 
     for case in args.cases:
@@ -148,7 +156,7 @@ def main() -> None:
                     "layers": case.layers,
                     "steps": steps,
                     "mode": mode,
-                    "avg_step_ms": result.timings.wall_s * 1000.0 / steps,
+                    "avg_step_ms": result.wall_s * 1000.0 / steps,
                     "final_energy": float(result.final_energy),
                 }
             )

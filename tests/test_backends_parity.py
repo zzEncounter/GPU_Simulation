@@ -1,9 +1,10 @@
-"""Parity checks between the standalone CUDA backend and PennyLane."""
+"""Parity checks between standalone backend modes and the PennyLane reference."""
 
 from __future__ import annotations
 
 import unittest
 
+from autograd import value_and_grad
 import numpy as np
 import pennylane as qml
 from pennylane import numpy as pnp
@@ -11,27 +12,43 @@ from pennylane import numpy as pnp
 from ring_ising.backends.standalone import RingIsingAdjointBackend, StandaloneBackendConfig
 from ring_ising.models import build_ring_ising_hamiltonian, hardware_efficient_ring
 
+LAYERS = 2
+CASES = (
+    {"num_qubits": 2, "field": 0.7},
+    {"num_qubits": 4, "field": 1.0},
+    {"num_qubits": 6, "field": 1.1},
+)
+SEEDS = (123, 321, 2026)
+MODES = (
+    "inverse_walk",
+    "save_param_states",
+    "checkpoint",
+    "dense_scan",
+    "block_fused_adjoint",
+    "intrablock_parallel",
+)
+TOLERANCES = {
+    "inverse_walk": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "save_param_states": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "checkpoint": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "dense_scan": {"energy_atol": 1e-8, "grad_atol": 1e-7},
+    "block_fused_adjoint": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "intrablock_parallel": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+}
+
 
 class StandaloneBackendParityTest(unittest.TestCase):
-    def test_energy_and_gradient_match_pennylane(self) -> None:
-        num_qubits = 4
-        layers = 2
-        field = 0.7
-        rng = np.random.default_rng(123)
-        params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
+    def _make_params(self, *, seed: int, num_qubits: int) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        return 0.2 * rng.standard_normal((LAYERS, num_qubits, 2))
 
-        backend = RingIsingAdjointBackend(
-            StandaloneBackendConfig(
-                num_qubits=num_qubits,
-                layers=layers,
-                field=field,
-                gradient_strategy="save_param_states",
-                checkpoint_interval_ops=None,
-                gate_fusion=True,
-            )
-        )
-        standalone_energy, standalone_grad = backend.energy_and_grad(params)
-
+    def _pennylane_reference(
+        self,
+        *,
+        num_qubits: int,
+        field: float,
+        params: np.ndarray,
+    ) -> tuple[float, np.ndarray]:
         dev = qml.device("lightning.gpu", wires=num_qubits)
         hamiltonian = build_ring_ising_hamiltonian(num_qubits, field)
 
@@ -41,45 +58,136 @@ class StandaloneBackendParityTest(unittest.TestCase):
             return qml.expval(hamiltonian)
 
         qnode_params = pnp.array(params, requires_grad=True)
-        pennylane_energy = float(energy_qnode(qnode_params))
-        pennylane_grad = np.asarray(qml.grad(energy_qnode)(qnode_params), dtype=np.float64)
+        energy, grad = value_and_grad(energy_qnode)(qnode_params)
+        return float(energy), np.asarray(grad, dtype=np.float64)
 
-        np.testing.assert_allclose(standalone_energy, pennylane_energy, atol=1e-9, rtol=1e-9)
-        np.testing.assert_allclose(standalone_grad, pennylane_grad, atol=1e-8, rtol=1e-8)
-
-    def test_checkpoint_strategy_matches_save_param_states(self) -> None:
-        num_qubits = 6
-        layers = 2
-        field = 1.0
-        rng = np.random.default_rng(321)
-        params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
-
-        save_param_backend = RingIsingAdjointBackend(
+    def _standalone_result(
+        self,
+        *,
+        mode: str,
+        num_qubits: int,
+        field: float,
+        params: np.ndarray,
+    ) -> tuple[float, np.ndarray]:
+        checkpoint_interval_ops = (
+            3 if mode == "checkpoint" else 6 if mode == "block_fused_adjoint" else None
+        )
+        intrablock_block_size = 3 if mode == "intrablock_parallel" else None
+        backend = RingIsingAdjointBackend(
             StandaloneBackendConfig(
                 num_qubits=num_qubits,
-                layers=layers,
+                layers=LAYERS,
                 field=field,
-                gradient_strategy="save_param_states",
-                checkpoint_interval_ops=None,
+                gradient_strategy=mode,
+                checkpoint_interval_ops=checkpoint_interval_ops,
+                intrablock_block_size=intrablock_block_size,
                 gate_fusion=True,
             )
         )
-        checkpoint_backend = RingIsingAdjointBackend(
-            StandaloneBackendConfig(
-                num_qubits=num_qubits,
-                layers=layers,
-                field=field,
-                gradient_strategy="checkpoint",
-                checkpoint_interval_ops=5,
-                gate_fusion=True,
-            )
+        return backend.energy_and_grad(params)
+
+    def test_each_mode_matches_pennylane_reference(self) -> None:
+        for case in CASES:
+            num_qubits = int(case["num_qubits"])
+            field = float(case["field"])
+            for seed in SEEDS:
+                params = self._make_params(seed=seed, num_qubits=num_qubits)
+                ref_energy, ref_grad = self._pennylane_reference(
+                    num_qubits=num_qubits,
+                    field=field,
+                    params=params,
+                )
+                for mode in MODES:
+                    if mode == "dense_scan" and num_qubits > 6:
+                        continue
+                    tolerances = TOLERANCES[mode]
+                    with self.subTest(
+                        mode=mode,
+                        num_qubits=num_qubits,
+                        layers=LAYERS,
+                        field=field,
+                        seed=seed,
+                    ):
+                        energy, grad = self._standalone_result(
+                            mode=mode,
+                            num_qubits=num_qubits,
+                            field=field,
+                            params=params,
+                        )
+                        np.testing.assert_allclose(
+                            energy,
+                            ref_energy,
+                            atol=tolerances["energy_atol"],
+                            rtol=tolerances["energy_atol"],
+                        )
+                        np.testing.assert_allclose(
+                            grad,
+                            ref_grad,
+                            atol=tolerances["grad_atol"],
+                            rtol=tolerances["grad_atol"],
+                        )
+
+    def test_intrablock_parallel_matches_save_param_states_beyond_dense_scan_limit(self) -> None:
+        num_qubits = 8
+        field = 0.9
+        params = self._make_params(seed=2027, num_qubits=num_qubits)
+
+        reference_energy, reference_grad = self._standalone_result(
+            mode="save_param_states",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
+        )
+        intrablock_energy, intrablock_grad = self._standalone_result(
+            mode="intrablock_parallel",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
         )
 
-        save_param_energy, save_param_grad = save_param_backend.energy_and_grad(params)
-        checkpoint_energy, checkpoint_grad = checkpoint_backend.energy_and_grad(params)
+        np.testing.assert_allclose(
+            intrablock_energy,
+            reference_energy,
+            atol=TOLERANCES["intrablock_parallel"]["energy_atol"],
+            rtol=TOLERANCES["intrablock_parallel"]["energy_atol"],
+        )
+        np.testing.assert_allclose(
+            intrablock_grad,
+            reference_grad,
+            atol=TOLERANCES["intrablock_parallel"]["grad_atol"],
+            rtol=TOLERANCES["intrablock_parallel"]["grad_atol"],
+        )
 
-        np.testing.assert_allclose(checkpoint_energy, save_param_energy, atol=1e-9, rtol=1e-9)
-        np.testing.assert_allclose(checkpoint_grad, save_param_grad, atol=1e-8, rtol=1e-8)
+    def test_inverse_walk_matches_save_param_states_beyond_dense_scan_limit(self) -> None:
+        num_qubits = 8
+        field = 0.9
+        params = self._make_params(seed=2028, num_qubits=num_qubits)
+
+        reference_energy, reference_grad = self._standalone_result(
+            mode="save_param_states",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
+        )
+        inverse_energy, inverse_grad = self._standalone_result(
+            mode="inverse_walk",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
+        )
+
+        np.testing.assert_allclose(
+            inverse_energy,
+            reference_energy,
+            atol=TOLERANCES["inverse_walk"]["energy_atol"],
+            rtol=TOLERANCES["inverse_walk"]["energy_atol"],
+        )
+        np.testing.assert_allclose(
+            inverse_grad,
+            reference_grad,
+            atol=TOLERANCES["inverse_walk"]["grad_atol"],
+            rtol=TOLERANCES["inverse_walk"]["grad_atol"],
+        )
 
     def test_block_fused_adjoint_strategy_matches_save_param_states(self) -> None:
         num_qubits = 7
@@ -95,6 +203,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 field=field,
                 gradient_strategy="save_param_states",
                 checkpoint_interval_ops=None,
+                intrablock_block_size=None,
                 gate_fusion=True,
             )
         )
@@ -105,6 +214,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 field=field,
                 gradient_strategy="block_fused_adjoint",
                 checkpoint_interval_ops=6,
+                intrablock_block_size=None,
                 gate_fusion=True,
             )
         )
@@ -114,46 +224,6 @@ class StandaloneBackendParityTest(unittest.TestCase):
 
         np.testing.assert_allclose(block_energy, save_param_energy, atol=1e-9, rtol=1e-9)
         np.testing.assert_allclose(block_grad, save_param_grad, atol=1e-8, rtol=1e-8)
-
-    def test_dense_scan_matches_save_param_states(self) -> None:
-        for num_qubits, layers, field, seed in (
-            (5, 2, 0.9, 2026),
-            (6, 2, 1.1, 2027),
-        ):
-            with self.subTest(num_qubits=num_qubits, layers=layers):
-                rng = np.random.default_rng(seed)
-                params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
-
-                reference_backend = RingIsingAdjointBackend(
-                    StandaloneBackendConfig(
-                        num_qubits=num_qubits,
-                        layers=layers,
-                        field=field,
-                        gradient_strategy="save_param_states",
-                        checkpoint_interval_ops=None,
-                        gate_fusion=True,
-                    )
-                )
-                dense_backend = RingIsingAdjointBackend(
-                    StandaloneBackendConfig(
-                        num_qubits=num_qubits,
-                        layers=layers,
-                        field=field,
-                        gradient_strategy="dense_scan",
-                        checkpoint_interval_ops=None,
-                        gate_fusion=True,
-                    )
-                )
-
-                ref_energy, ref_grad = reference_backend.energy_and_grad(params)
-                dense_energy, dense_grad = dense_backend.energy_and_grad(params)
-                np.testing.assert_allclose(
-                    dense_energy, ref_energy, atol=1e-8, rtol=1e-8
-                )
-                np.testing.assert_allclose(
-                    dense_grad, ref_grad, atol=1e-7, rtol=1e-7
-                )
-
 
 
 if __name__ == "__main__":

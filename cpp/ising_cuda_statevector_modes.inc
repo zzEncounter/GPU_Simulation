@@ -21,6 +21,66 @@ auto run_energy_only(RingIsingCudaBackend::Impl &impl, const double *params,
     return result;
 }
 
+auto run_energy_and_grad_inverse_walk(RingIsingCudaBackend::Impl &impl,
+                                      const double *params,
+                                      std::size_t num_params,
+                                      bool compute_gradient)
+    -> EnergyGradResult {
+    validate_num_params(impl.expected_params, num_params);
+    const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
+                                    impl.fuse_ring_cnot_layer);
+
+    detail::launch_init_zero_state(impl.current.get(), impl.state_size);
+    for (const auto &op : ops) {
+        apply_op_inplace(impl.current.get(), impl.state_size, op, false,
+                         impl.scratch.get(), impl.num_qubits);
+    }
+    detail::launch_apply_hamiltonian(impl.lambda.get(), impl.current.get(),
+                                     impl.state_size, impl.num_qubits,
+                                     impl.field);
+
+    EnergyGradResult result;
+    result.energy =
+        detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
+                                      impl.state_size)
+            .real();
+
+    if (!compute_gradient) {
+        return result;
+    }
+
+    result.gradient.assign(impl.expected_params, 0.0);
+    for (std::size_t reverse_index = ops.size(); reverse_index-- > 0;) {
+        const auto &op = ops[reverse_index];
+        apply_op_inplace(impl.current.get(), impl.state_size, op, true,
+                         impl.scratch.get(), impl.num_qubits);
+
+        if (op.is_parametric) {
+            if (op.kind == OpKind::FusedRYRZ) {
+                const auto [grad_theta, grad_phi] = detail::fused_ryrz_gradients(
+                    impl.lambda.get(), impl.current.get(), impl.state_size, op.wire0,
+                    op.theta0, op.theta1);
+                result.gradient[op.param_index0] = grad_theta;
+                result.gradient[op.param_index1] = grad_phi;
+            } else {
+                apply_param_derivative(impl.deriv.get(), impl.current.get(),
+                                       impl.state_size, op);
+                const Complex grad_complex =
+                    detail::complex_inner_product(impl.lambda.get(), impl.deriv.get(),
+                                                  impl.state_size);
+                result.gradient[op.param_index0] = 2.0 * grad_complex.real();
+            }
+        }
+
+        if (reverse_index != 0) {
+            apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
+                             impl.scratch.get(), impl.num_qubits);
+        }
+    }
+
+    return result;
+}
+
 auto run_energy_and_grad_save_param_states(
     RingIsingCudaBackend::Impl &impl, const double *params,
     std::size_t num_params, bool compute_gradient) -> EnergyGradResult {
@@ -99,6 +159,14 @@ auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
 
     if (impl.strategy == GradientStrategy::DenseScan) {
         return run_dense_scan_energy_and_grad_fast(impl, params, num_params);
+    }
+    if (impl.strategy == GradientStrategy::InverseWalk) {
+        return run_energy_and_grad_inverse_walk(impl, params, num_params,
+                                                compute_gradient);
+    }
+    if (impl.strategy == GradientStrategy::IntrablockParallel) {
+        return run_intrablock_parallel_energy_and_grad(impl, params, num_params,
+                                                       compute_gradient);
     }
 
     const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from ring_ising.config import BACKENDS, RunConfig
 
-from .pennylane import PennyLaneWorkflow, run_pennylane
-from .standalone import StandaloneWorkflow, run_standalone
-
-WorkflowHandle = PennyLaneWorkflow | StandaloneWorkflow
+from .pennylane import run_pennylane
+from .standalone import run_standalone
 
 
 def run(config: RunConfig):
@@ -24,7 +22,6 @@ def run(config: RunConfig):
 __all__ = [
     "BACKENDS",
     "RunConfig",
-    "WorkflowHandle",
     "run",
     "run_pennylane",
     "run_standalone",

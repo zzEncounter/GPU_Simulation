@@ -9,6 +9,8 @@
 
 多人协作说明见 [COLLABORATION.md](./COLLABORATION.md)（当前统一远端：`git@github.com:zzEncounter/GPU_Simulation.git`）。
 
+`intrablock_parallel` 模式的当前实现说明与复杂度分析见 [docs/intrablock_parallel.md](./docs/intrablock_parallel.md)。
+
 ## 目录结构
 
 - `ring_ising/config.py`：统一用户侧运行配置。
@@ -42,9 +44,11 @@
 
 梯度内存策略仅保留：
 
+- `inverse_walk`
 - `save_param_states`
 - `checkpoint`
 - `dense_scan`（实验模式，要求 `num_qubits <= 6`）
+- `intrablock_parallel`
 
 补充说明：
 
@@ -95,11 +99,16 @@ python -m venv .venv
 ```bash
 # 指定梯度策略
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy save_param_states
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy inverse_walk
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy checkpoint
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy dense_scan
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy intrablock_parallel
 
 # checkpoint 粒度
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy checkpoint --checkpoint-interval 8
+
+# intrablock_parallel 的 block 大小
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy intrablock_parallel --intrablock-block-size 64
 
 # 关闭 gate fusion 做对照
 .venv/bin/python run_workflow.py --backend standalone --disable-gate-fusion
@@ -147,7 +156,7 @@ standalone_result = run(
 ```bash
 .venv/bin/python benchmarks/compare_gradient_strategy.py \
   --cases 4x8 5x32 6x128 \
-  --modes save_param_states checkpoint dense_scan \
+  --modes inverse_walk save_param_states checkpoint dense_scan intrablock_parallel \
   --reference-mode save_param_states
 ```
 

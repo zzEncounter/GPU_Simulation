@@ -12,7 +12,6 @@ from ring_ising.cli.common import format_telemetry_banner
 from ring_ising.config import RunConfig
 from ring_ising.runtime import print_gpu_telemetry_summary
 from ring_ising.training import (
-    LoopTimingBreakdown,
     StepEvaluation,
     TrainingRunResult,
     run_gradient_descent_loop,
@@ -41,6 +40,7 @@ def _to_backend_config(config: RunConfig) -> StandaloneBackendConfig:
         field=config.field,
         gradient_strategy=config.gradient_strategy,
         checkpoint_interval_ops=config.checkpoint_interval_ops,
+        intrablock_block_size=config.intrablock_block_size,
         gate_fusion=config.gate_fusion,
     )
 
@@ -62,6 +62,11 @@ def print_standalone_runtime_summary(workflow: StandaloneWorkflow, params: np.nd
     print(f"  Gate fusion enabled: {config.gate_fusion}")
     if workflow.backend.gradient_strategy == "checkpoint":
         print(f"  Effective checkpoint interval: {workflow.backend.checkpoint_interval_ops} ops")
+    if workflow.backend.gradient_strategy == "intrablock_parallel":
+        print(
+            "  Effective intrablock block size: "
+            f"{workflow.backend.intrablock_block_size} ops"
+        )
     print(
         "  Estimated gradient workspace: "
         f"{workflow.backend.estimated_workspace_gib:.2f} GiB"
@@ -131,10 +136,11 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
             final_params=np.asarray(loop.final_params, dtype=np.float64),
             final_energy=float(final_energy),
             step_metrics=loop.step_metrics,
-            timings=LoopTimingBreakdown(wall_s=total_wall_s),
+            wall_s=total_wall_s,
             metadata={
                 "gradient_strategy": workflow.backend.gradient_strategy,
                 "checkpoint_interval_ops": workflow.backend.checkpoint_interval_ops,
+                "intrablock_block_size": workflow.backend.intrablock_block_size,
                 "estimated_workspace_gib": workflow.backend.estimated_workspace_gib,
                 "gate_fusion": config.gate_fusion,
             },
@@ -161,7 +167,5 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
 __all__ = [
     "StandaloneResult",
     "StandaloneWorkflow",
-    "create_standalone_workflow",
-    "print_standalone_runtime_summary",
     "run_standalone",
 ]

@@ -111,6 +111,7 @@ def estimate_mode_memory(
         field=args.field,
         gradient_strategy=mode,
         checkpoint_interval_ops=args.checkpoint_interval_ops,
+        intrablock_block_size=None,
         gate_fusion=args.gate_fusion,
     )
     config.validate()

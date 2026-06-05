@@ -19,6 +19,9 @@ class RingIsingAdjointBackend:
         self.checkpoint_interval_ops = config.resolve_checkpoint_interval_ops(
             self.gradient_strategy
         )
+        self.intrablock_block_size = config.resolve_intrablock_block_size(
+            self.gradient_strategy
+        )
         self.estimated_workspace_gib = config.estimated_gradient_workspace_gib_for(
             self.gradient_strategy,
             self.checkpoint_interval_ops,
@@ -31,6 +34,7 @@ class RingIsingAdjointBackend:
             self.gradient_strategy,
             self.config.gate_fusion,
             self.checkpoint_interval_ops,
+            self.intrablock_block_size,
         )
 
     @staticmethod
