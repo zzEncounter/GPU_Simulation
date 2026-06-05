@@ -24,7 +24,8 @@ enum class OpKind { RY, RZ, CNOT, FusedRYRZ, RingCNOTLayer };
 enum class GradientStrategy {
     SaveParamStates,
     Checkpoint,
-    DenseScan
+    DenseScan,
+    BlockFusedAdjoint
 };
 
 struct OpDesc {
@@ -179,12 +180,15 @@ auto parse_gradient_strategy(const std::string &strategy)
     if (strategy == "dense_scan") {
         return GradientStrategy::DenseScan;
     }
+    if (strategy == "block_fused_adjoint") {
+        return GradientStrategy::BlockFusedAdjoint;
+    }
     if (strategy == "bruteforce_parallel_q6") {
         return GradientStrategy::DenseScan;
     }
     throw std::invalid_argument(
         "Unknown gradient strategy. Expected one of: "
-        "save_param_states, checkpoint, dense_scan.");
+        "save_param_states, checkpoint, dense_scan, block_fused_adjoint.");
 }
 
 struct CublasHandle {
@@ -251,6 +255,12 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<Complex> save_param_states;
     DeviceBuffer<Complex> checkpoints;
     DeviceBuffer<Complex> local_states;
+    DeviceBuffer<Complex> block_fused_lambda_states;
+    DeviceBuffer<std::size_t> block_fused_wires;
+    DeviceBuffer<std::size_t> block_fused_param_indices;
+    DeviceBuffer<double> block_fused_thetas;
+    DeviceBuffer<double> block_fused_phis;
+    DeviceBuffer<double> block_fused_gradients;
     std::unique_ptr<CublasHandle> dense_cublas;
     DeviceBuffer<Complex> dense_gate_mats;
     DeviceBuffer<Complex> dense_dgate_mats;
@@ -289,18 +299,29 @@ struct RingIsingCudaBackend::Impl {
           fuse_ring_cnot_layer(fuse_ring_cnot_layer_),
           current(state_size), lambda(state_size), deriv(state_size),
           scratch(state_size) {
-        if (strategy == GradientStrategy::Checkpoint &&
+        if ((strategy == GradientStrategy::Checkpoint ||
+             strategy == GradientStrategy::BlockFusedAdjoint) &&
             (checkpoint_interval_ops_ == 0 || checkpoint_interval_ops_ >= num_ops)) {
             strategy = GradientStrategy::SaveParamStates;
         }
 
         if (strategy == GradientStrategy::SaveParamStates) {
             save_param_states.allocate((expected_params / 2) * state_size);
-        } else if (strategy == GradientStrategy::Checkpoint) {
+        } else if (strategy == GradientStrategy::Checkpoint ||
+                   strategy == GradientStrategy::BlockFusedAdjoint) {
             num_chunks = (num_ops + checkpoint_interval_ops - 1) /
                          checkpoint_interval_ops;
             checkpoints.allocate((num_chunks + 1) * state_size);
             local_states.allocate((checkpoint_interval_ops + 1) * state_size);
+            if (strategy == GradientStrategy::BlockFusedAdjoint) {
+                block_fused_lambda_states.allocate(checkpoint_interval_ops *
+                                                   state_size);
+                block_fused_wires.allocate(checkpoint_interval_ops);
+                block_fused_param_indices.allocate(2 * checkpoint_interval_ops);
+                block_fused_thetas.allocate(checkpoint_interval_ops);
+                block_fused_phis.allocate(checkpoint_interval_ops);
+                block_fused_gradients.allocate(expected_params);
+            }
         }
     }
 };
@@ -311,6 +332,8 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
 
 
 #include "ising_cuda_statevector_modes.inc"
+
+#include "ising_cuda_block_fused_adjoint_modes.inc"
 
 #include "ising_cuda_dense_modes.inc"
 
@@ -337,6 +360,10 @@ auto RingIsingCudaBackend::energy_and_grad(const double *params,
                                            std::size_t num_params,
                                            bool compute_gradient)
     -> EnergyGradResult {
+    if (impl_->strategy == GradientStrategy::BlockFusedAdjoint) {
+        return run_energy_and_grad_block_fused_adjoint(*impl_, params, num_params,
+                                                       compute_gradient);
+    }
     return run_energy_and_grad_checkpointed(*impl_, params, num_params,
                                             compute_gradient);
 }

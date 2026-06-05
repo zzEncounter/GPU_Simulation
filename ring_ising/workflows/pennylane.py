@@ -77,6 +77,9 @@ def print_pennylane_runtime_summary(
     """Print the environment and circuit metadata for the run."""
     specs = qml.specs(workflow.energy_qnode)(as_pennylane_params(params))
     resources = specs["resources"]
+    diff_method = getattr(workflow.energy_qnode, "diff_method", "adjoint")
+    num_trainable_params = np.asarray(params).size
+    num_observables = sum(getattr(resources, "measurements", {}).values())
 
     print("Runtime:")
     print("  Backend: PennyLane")
@@ -90,9 +93,9 @@ def print_pennylane_runtime_summary(
 
     print("Backend details:")
     print(f"  Hamiltonian terms: {2 * workflow.config.num_qubits}")
-    print(f"  Diff method: {specs['diff_method']}")
-    print(f"  Trainable params: {specs['num_trainable_params']}")
-    print(f"  Observables: {specs['num_observables']}")
+    print(f"  Diff method: {diff_method}")
+    print(f"  Trainable params: {num_trainable_params}")
+    print(f"  Observables: {num_observables}")
     print(f"  Gates: {resources.num_gates}")
     print(f"  Depth: {resources.depth}")
     print(f"  Gate types: {format_gate_types(resources.gate_types)}")

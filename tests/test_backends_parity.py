@@ -81,6 +81,40 @@ class StandaloneBackendParityTest(unittest.TestCase):
         np.testing.assert_allclose(checkpoint_energy, save_param_energy, atol=1e-9, rtol=1e-9)
         np.testing.assert_allclose(checkpoint_grad, save_param_grad, atol=1e-8, rtol=1e-8)
 
+    def test_block_fused_adjoint_strategy_matches_save_param_states(self) -> None:
+        num_qubits = 7
+        layers = 3
+        field = 0.8
+        rng = np.random.default_rng(2028)
+        params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
+
+        save_param_backend = RingIsingAdjointBackend(
+            StandaloneBackendConfig(
+                num_qubits=num_qubits,
+                layers=layers,
+                field=field,
+                gradient_strategy="save_param_states",
+                checkpoint_interval_ops=None,
+                gate_fusion=True,
+            )
+        )
+        block_fused_backend = RingIsingAdjointBackend(
+            StandaloneBackendConfig(
+                num_qubits=num_qubits,
+                layers=layers,
+                field=field,
+                gradient_strategy="block_fused_adjoint",
+                checkpoint_interval_ops=6,
+                gate_fusion=True,
+            )
+        )
+
+        save_param_energy, save_param_grad = save_param_backend.energy_and_grad(params)
+        block_energy, block_grad = block_fused_backend.energy_and_grad(params)
+
+        np.testing.assert_allclose(block_energy, save_param_energy, atol=1e-9, rtol=1e-9)
+        np.testing.assert_allclose(block_grad, save_param_grad, atol=1e-8, rtol=1e-8)
+
     def test_dense_scan_matches_save_param_states(self) -> None:
         for num_qubits, layers, field, seed in (
             (5, 2, 0.9, 2026),

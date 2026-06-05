@@ -83,18 +83,21 @@ class StandaloneBackendConfig:
         if strategy == "dense_scan":
             padded = 1 << (self.num_ops - 1).bit_length() if self.num_ops > 0 else 1
             return 3 * padded + max(self.num_ops + 1, padded) + 3
-        if strategy != "checkpoint":
+        if strategy != "checkpoint" and strategy != "block_fused_adjoint":
             raise ValueError(
-                "strategy must be 'save_param_states', 'checkpoint', or 'dense_scan'."
+                "strategy must be 'save_param_states', 'checkpoint', "
+                "'dense_scan', or 'block_fused_adjoint'."
             )
         interval = (
-            self.resolve_checkpoint_interval_ops("checkpoint")
+            self.resolve_checkpoint_interval_ops(strategy)
             if checkpoint_interval_ops is None
             else checkpoint_interval_ops
         )
         if interval == 0:
             return self.num_parametric_gates + 3
         num_chunks = int(math.ceil(self.num_ops / interval))
+        if strategy == "block_fused_adjoint":
+            return num_chunks + 2 * interval + 6
         return num_chunks + interval + 5
 
     def estimated_gradient_workspace_gib_for(
@@ -137,7 +140,8 @@ class StandaloneBackendConfig:
             raise ValueError("layers must be at least 1.")
         if strategy not in STANDALONE_GRADIENT_STRATEGIES:
             raise ValueError(
-                "gradient_strategy must be 'save_param_states', 'checkpoint', or 'dense_scan'."
+                "gradient_strategy must be 'save_param_states', 'checkpoint', "
+                "'dense_scan', or 'block_fused_adjoint'."
             )
         if strategy == "dense_scan" and self.num_qubits > 6:
             raise ValueError("dense_scan requires num_qubits <= 6.")

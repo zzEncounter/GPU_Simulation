@@ -9,6 +9,7 @@ STANDALONE_GRADIENT_STRATEGIES = (
     "save_param_states",
     "checkpoint",
     "dense_scan",
+    "block_fused_adjoint",
 )
 DEFAULT_PROGRESS_PARTITIONS = 60
 
