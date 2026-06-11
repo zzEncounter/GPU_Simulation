@@ -55,6 +55,7 @@
 - `save_all` 路径已经从对外接口移除。
 - 默认开启 gate fusion。
 - 如需 A/B 对照，可用 `--disable-gate-fusion` 关闭。
+- `inverse_walk` 与 `save_param_states` 现在固定使用与 PennyLane 一致的 `RY -> RZ -> CNOT` 门级结构；这两个模式不会使用电路级 gate fusion。
 
 ## C++/CUDA 拆分状态
 

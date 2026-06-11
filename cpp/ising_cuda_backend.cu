@@ -29,17 +29,6 @@ enum class GradientStrategy {
     IntrablockParallel
 };
 
-struct OpDesc {
-    OpKind kind;
-    std::size_t wire0;
-    std::size_t wire1;
-    double theta0;
-    double theta1;
-    std::size_t param_index0;
-    std::size_t param_index1;
-    bool is_parametric;
-};
-
 auto build_ring_ops(std::size_t num_qubits, std::size_t num_layers,
                     const double *params,
                     bool fuse_ring_cnot_layer) -> std::vector<OpDesc> {
@@ -66,6 +55,43 @@ auto build_ring_ops(std::size_t num_qubits, std::size_t num_layers,
         }
     }
     return ops;
+}
+
+auto build_pennylane_gate_level_ops(std::size_t num_qubits,
+                                    std::size_t num_layers,
+                                    const double *params)
+    -> std::vector<OpDesc> {
+    std::vector<OpDesc> ops;
+    ops.reserve(3 * num_layers * num_qubits);
+
+    for (std::size_t layer = 0; layer < num_layers; layer++) {
+        for (std::size_t wire = 0; wire < num_qubits; wire++) {
+            const auto base = (layer * num_qubits + wire) * 2;
+            const double theta0 = params != nullptr ? params[base] : 0.0;
+            const double theta1 = params != nullptr ? params[base + 1] : 0.0;
+            ops.push_back(
+                {OpKind::RY, wire, 0, theta0, 0.0, base, 0, true});
+            ops.push_back(
+                {OpKind::RZ, wire, 0, theta1, 0.0, base + 1, 0, true});
+        }
+        for (std::size_t wire = 0; wire < num_qubits; wire++) {
+            ops.push_back(
+                {OpKind::CNOT, wire, (wire + 1) % num_qubits, 0.0, 0.0, 0, 0,
+                 false});
+        }
+    }
+    return ops;
+}
+
+auto build_ops_for_strategy(std::size_t num_qubits, std::size_t num_layers,
+                            const double *params, GradientStrategy strategy,
+                            bool fuse_ring_cnot_layer)
+    -> std::vector<OpDesc> {
+    if (strategy == GradientStrategy::InverseWalk ||
+        strategy == GradientStrategy::SaveParamStates) {
+        return build_pennylane_gate_level_ops(num_qubits, num_layers, params);
+    }
+    return build_ring_ops(num_qubits, num_layers, params, fuse_ring_cnot_layer);
 }
 
 void copy_device_buffer(Complex *dst, const Complex *src, std::size_t size);
@@ -99,13 +125,8 @@ void apply_op_inplace(Complex *state, std::size_t size, const OpDesc &op,
         detail::launch_apply_cnot(state, size, op.wire0, op.wire1);
         break;
     case OpKind::FusedRYRZ:
-        if (inverse) {
-            detail::launch_apply_rz(state, size, op.wire0, -op.theta1);
-            detail::launch_apply_ry(state, size, op.wire0, -op.theta0);
-        } else {
-            detail::launch_apply_ryrz(state, size, op.wire0, op.theta0,
-                                      op.theta1);
-        }
+        detail::launch_apply_ryrz(state, size, op.wire0, op.theta0,
+                                  op.theta1, inverse);
         break;
     case OpKind::RingCNOTLayer:
         if (scratch == nullptr) {
@@ -297,6 +318,7 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<Complex> intrablock_lambda_boundaries;
     DeviceBuffer<Complex> intrablock_forward_states;
     DeviceBuffer<double> intrablock_gradients;
+    DeviceBuffer<double> gate_level_gradients;
 
     Impl(std::size_t num_qubits_, std::size_t num_layers_, double field_,
          const std::string &gradient_strategy_,
@@ -326,7 +348,10 @@ struct RingIsingCudaBackend::Impl {
         }
 
         if (strategy == GradientStrategy::SaveParamStates) {
-            save_param_states.allocate((expected_params / 2) * state_size);
+            save_param_states.allocate(expected_params * state_size);
+            gate_level_gradients.allocate(expected_params);
+        } else if (strategy == GradientStrategy::InverseWalk) {
+            gate_level_gradients.allocate(expected_params);
         } else if (strategy == GradientStrategy::Checkpoint ||
                    strategy == GradientStrategy::BlockFusedAdjoint) {
             num_chunks = (num_ops + checkpoint_interval_ops - 1) /

@@ -59,7 +59,9 @@ def print_standalone_runtime_summary(workflow: StandaloneWorkflow, params: np.nd
     print("Runtime:")
     print("  Backend: Standalone CUDA")
     print(f"  Gradient strategy: {workflow.backend.gradient_strategy}")
-    print(f"  Gate fusion enabled: {config.gate_fusion}")
+    print(f"  Gate fusion enabled: {workflow.backend.effective_gate_fusion}")
+    if workflow.backend.uses_pennylane_gate_structure:
+        print("  PennyLane-style gate structure: True")
     if workflow.backend.gradient_strategy == "checkpoint":
         print(f"  Effective checkpoint interval: {workflow.backend.checkpoint_interval_ops} ops")
     if workflow.backend.gradient_strategy == "intrablock_parallel":
@@ -142,7 +144,8 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
                 "checkpoint_interval_ops": workflow.backend.checkpoint_interval_ops,
                 "intrablock_block_size": workflow.backend.intrablock_block_size,
                 "estimated_workspace_gib": workflow.backend.estimated_workspace_gib,
-                "gate_fusion": config.gate_fusion,
+                "gate_fusion": workflow.backend.effective_gate_fusion,
+                "pennylane_gate_structure": workflow.backend.uses_pennylane_gate_structure,
             },
         )
 

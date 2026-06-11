@@ -97,7 +97,7 @@ class StandaloneBackendConfig:
         if strategy == "inverse_walk":
             return 4
         if strategy == "save_param_states":
-            return self.num_parametric_gates + 3
+            return self.num_params + 3
         if strategy == "dense_scan":
             padded = 1 << (self.num_ops - 1).bit_length() if self.num_ops > 0 else 1
             return 3 * padded + max(self.num_ops + 1, padded) + 3

@@ -1,8 +1,9 @@
 auto run_energy_only(RingIsingCudaBackend::Impl &impl, const double *params,
                      std::size_t num_params) -> EnergyGradResult {
     validate_num_params(impl.expected_params, num_params);
-    const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
-                                    impl.fuse_ring_cnot_layer);
+    const auto ops = build_ops_for_strategy(impl.num_qubits, impl.num_layers,
+                                            params, impl.strategy,
+                                            impl.fuse_ring_cnot_layer);
 
     detail::launch_init_zero_state(impl.current.get(), impl.state_size);
     for (const auto &op : ops) {
@@ -27,8 +28,8 @@ auto run_energy_and_grad_inverse_walk(RingIsingCudaBackend::Impl &impl,
                                       bool compute_gradient)
     -> EnergyGradResult {
     validate_num_params(impl.expected_params, num_params);
-    const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
-                                    impl.fuse_ring_cnot_layer);
+    const auto ops = build_pennylane_gate_level_ops(impl.num_qubits,
+                                                    impl.num_layers, params);
 
     detail::launch_init_zero_state(impl.current.get(), impl.state_size);
     for (const auto &op : ops) {
@@ -49,35 +50,43 @@ auto run_energy_and_grad_inverse_walk(RingIsingCudaBackend::Impl &impl,
         return result;
     }
 
-    result.gradient.assign(impl.expected_params, 0.0);
+    detail::check_cuda(
+        cudaMemsetAsync(impl.gate_level_gradients.get(), 0,
+                        sizeof(double) * impl.expected_params, 0),
+        "zero inverse_walk gradients");
     for (std::size_t reverse_index = ops.size(); reverse_index-- > 0;) {
         const auto &op = ops[reverse_index];
-        apply_op_inplace(impl.current.get(), impl.state_size, op, true,
-                         impl.scratch.get(), impl.num_qubits);
-
-        if (op.is_parametric) {
-            if (op.kind == OpKind::FusedRYRZ) {
-                const auto [grad_theta, grad_phi] = detail::fused_ryrz_gradients(
-                    impl.lambda.get(), impl.current.get(), impl.state_size, op.wire0,
-                    op.theta0, op.theta1);
-                result.gradient[op.param_index0] = grad_theta;
-                result.gradient[op.param_index1] = grad_phi;
-            } else {
-                apply_param_derivative(impl.deriv.get(), impl.current.get(),
-                                       impl.state_size, op);
-                const Complex grad_complex =
-                    detail::complex_inner_product(impl.lambda.get(), impl.deriv.get(),
-                                                  impl.state_size);
-                result.gradient[op.param_index0] = 2.0 * grad_complex.real();
-            }
-        }
-
-        if (reverse_index != 0) {
-            apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
-                             impl.scratch.get(), impl.num_qubits);
+        switch (op.kind) {
+        case OpKind::RY:
+            detail::launch_inverse_walk_ry_step(
+                impl.current.get(), impl.lambda.get(), impl.state_size,
+                op.wire0, op.theta0,
+                impl.gate_level_gradients.get() + op.param_index0);
+            break;
+        case OpKind::RZ:
+            detail::launch_inverse_walk_rz_step(
+                impl.current.get(), impl.lambda.get(), impl.state_size,
+                op.wire0, op.theta0,
+                impl.gate_level_gradients.get() + op.param_index0);
+            break;
+        case OpKind::CNOT:
+            detail::launch_inverse_walk_cnot_step(
+                impl.current.get(), impl.lambda.get(), impl.state_size,
+                op.wire0, op.wire1);
+            break;
+        case OpKind::FusedRYRZ:
+        case OpKind::RingCNOTLayer:
+            throw std::runtime_error(
+                "inverse_walk expects PennyLane-style gate-level ops.");
         }
     }
 
+    result.gradient.assign(impl.expected_params, 0.0);
+    detail::check_cuda(
+        cudaMemcpy(result.gradient.data(), impl.gate_level_gradients.get(),
+                   sizeof(double) * impl.expected_params,
+                   cudaMemcpyDeviceToHost),
+        "copy inverse_walk gradients");
     return result;
 }
 
@@ -85,8 +94,8 @@ auto run_energy_and_grad_save_param_states(
     RingIsingCudaBackend::Impl &impl, const double *params,
     std::size_t num_params, bool compute_gradient) -> EnergyGradResult {
     validate_num_params(impl.expected_params, num_params);
-    const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
-                                    impl.fuse_ring_cnot_layer);
+    const auto ops = build_pennylane_gate_level_ops(impl.num_qubits,
+                                                    impl.num_layers, params);
 
     detail::launch_init_zero_state(impl.current.get(), impl.state_size);
     for (std::size_t op_index = 0; op_index < ops.size(); op_index++) {
@@ -94,7 +103,7 @@ auto run_energy_and_grad_save_param_states(
         if (compute_gradient && op.is_parametric) {
             copy_device_buffer(
                 state_slot(impl.save_param_states.get(), impl.state_size,
-                           op.param_index0 / 2),
+                           op.param_index0),
                 impl.current.get(), impl.state_size);
         }
         apply_op_inplace(impl.current.get(), impl.state_size, op, false,
@@ -115,34 +124,44 @@ auto run_energy_and_grad_save_param_states(
         return result;
     }
 
-    result.gradient.assign(impl.expected_params, 0.0);
+    detail::check_cuda(
+        cudaMemsetAsync(impl.gate_level_gradients.get(), 0,
+                        sizeof(double) * impl.expected_params, 0),
+        "zero save_param gradients");
     for (std::size_t reverse_index = ops.size(); reverse_index-- > 0;) {
         const auto &op = ops[reverse_index];
-        if (op.is_parametric) {
-            const Complex *state_before =
+        switch (op.kind) {
+        case OpKind::RY:
+            detail::launch_save_param_ry_step(
                 state_slot(impl.save_param_states.get(), impl.state_size,
-                           op.param_index0 / 2);
-            if (op.kind == OpKind::FusedRYRZ) {
-                const auto [grad_theta, grad_phi] = detail::fused_ryrz_gradients(
-                    impl.lambda.get(), state_before, impl.state_size, op.wire0,
-                    op.theta0, op.theta1);
-                result.gradient[op.param_index0] = grad_theta;
-                result.gradient[op.param_index1] = grad_phi;
-            } else {
-                apply_param_derivative(impl.deriv.get(), state_before,
-                                       impl.state_size, op);
-                const Complex grad_complex =
-                    detail::complex_inner_product(impl.lambda.get(), impl.deriv.get(),
-                                                  impl.state_size);
-                result.gradient[op.param_index0] = 2.0 * grad_complex.real();
-            }
-        }
-        if (reverse_index != 0) {
-            apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
-                             impl.scratch.get(), impl.num_qubits);
+                           op.param_index0),
+                impl.lambda.get(), impl.state_size, op.wire0, op.theta0,
+                impl.gate_level_gradients.get() + op.param_index0);
+            break;
+        case OpKind::RZ:
+            detail::launch_save_param_rz_step(
+                state_slot(impl.save_param_states.get(), impl.state_size,
+                           op.param_index0),
+                impl.lambda.get(), impl.state_size, op.wire0, op.theta0,
+                impl.gate_level_gradients.get() + op.param_index0);
+            break;
+        case OpKind::CNOT:
+            detail::launch_apply_cnot(impl.lambda.get(), impl.state_size,
+                                      op.wire0, op.wire1);
+            break;
+        case OpKind::FusedRYRZ:
+        case OpKind::RingCNOTLayer:
+            throw std::runtime_error(
+                "save_param_states expects PennyLane-style gate-level ops.");
         }
     }
 
+    result.gradient.assign(impl.expected_params, 0.0);
+    detail::check_cuda(
+        cudaMemcpy(result.gradient.data(), impl.gate_level_gradients.get(),
+                   sizeof(double) * impl.expected_params,
+                   cudaMemcpyDeviceToHost),
+        "copy save_param gradients");
     return result;
 }
 

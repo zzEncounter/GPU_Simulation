@@ -189,6 +189,74 @@ class StandaloneBackendParityTest(unittest.TestCase):
             rtol=TOLERANCES["inverse_walk"]["grad_atol"],
         )
 
+    def test_inverse_walk_uses_pennylane_style_gate_structure(self) -> None:
+        num_qubits = 6
+        field = 0.95
+        params = self._make_params(seed=2029, num_qubits=num_qubits)
+
+        fused_flag_backend = RingIsingAdjointBackend(
+            StandaloneBackendConfig(
+                num_qubits=num_qubits,
+                layers=LAYERS,
+                field=field,
+                gradient_strategy="inverse_walk",
+                checkpoint_interval_ops=None,
+                intrablock_block_size=None,
+                gate_fusion=True,
+            )
+        )
+        unfused_flag_backend = RingIsingAdjointBackend(
+            StandaloneBackendConfig(
+                num_qubits=num_qubits,
+                layers=LAYERS,
+                field=field,
+                gradient_strategy="inverse_walk",
+                checkpoint_interval_ops=None,
+                intrablock_block_size=None,
+                gate_fusion=False,
+            )
+        )
+
+        fused_energy, fused_grad = fused_flag_backend.energy_and_grad(params)
+        unfused_energy, unfused_grad = unfused_flag_backend.energy_and_grad(params)
+
+        np.testing.assert_allclose(fused_energy, unfused_energy, atol=1e-9, rtol=1e-9)
+        np.testing.assert_allclose(fused_grad, unfused_grad, atol=1e-9, rtol=1e-9)
+
+    def test_save_param_states_uses_pennylane_style_gate_structure(self) -> None:
+        num_qubits = 6
+        field = 0.95
+        params = self._make_params(seed=2030, num_qubits=num_qubits)
+
+        fused_flag_backend = RingIsingAdjointBackend(
+            StandaloneBackendConfig(
+                num_qubits=num_qubits,
+                layers=LAYERS,
+                field=field,
+                gradient_strategy="save_param_states",
+                checkpoint_interval_ops=None,
+                intrablock_block_size=None,
+                gate_fusion=True,
+            )
+        )
+        unfused_flag_backend = RingIsingAdjointBackend(
+            StandaloneBackendConfig(
+                num_qubits=num_qubits,
+                layers=LAYERS,
+                field=field,
+                gradient_strategy="save_param_states",
+                checkpoint_interval_ops=None,
+                intrablock_block_size=None,
+                gate_fusion=False,
+            )
+        )
+
+        fused_energy, fused_grad = fused_flag_backend.energy_and_grad(params)
+        unfused_energy, unfused_grad = unfused_flag_backend.energy_and_grad(params)
+
+        np.testing.assert_allclose(fused_energy, unfused_energy, atol=1e-9, rtol=1e-9)
+        np.testing.assert_allclose(fused_grad, unfused_grad, atol=1e-9, rtol=1e-9)
+
     def test_block_fused_adjoint_strategy_matches_save_param_states(self) -> None:
         num_qubits = 7
         layers = 3

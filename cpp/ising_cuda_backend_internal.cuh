@@ -103,7 +103,23 @@ void launch_apply_ring_cnot_layer(Complex *out, const Complex *in,
                                   std::size_t size, std::size_t num_qubits,
                                   bool inverse);
 void launch_apply_ryrz(Complex *state, std::size_t size, std::size_t wire,
-                       double theta_ry, double theta_rz);
+                       double theta_ry, double theta_rz,
+                       bool inverse = false);
+void launch_inverse_walk_ry_step(Complex *current, Complex *lambda,
+                                 std::size_t size, std::size_t wire,
+                                 double theta, double *out_gradient);
+void launch_inverse_walk_rz_step(Complex *current, Complex *lambda,
+                                 std::size_t size, std::size_t wire,
+                                 double theta, double *out_gradient);
+void launch_inverse_walk_cnot_step(Complex *current, Complex *lambda,
+                                   std::size_t size, std::size_t control,
+                                   std::size_t target);
+void launch_save_param_ry_step(const Complex *state_before, Complex *lambda,
+                               std::size_t size, std::size_t wire,
+                               double theta, double *out_gradient);
+void launch_save_param_rz_step(const Complex *state_before, Complex *lambda,
+                               std::size_t size, std::size_t wire,
+                               double theta, double *out_gradient);
 void launch_apply_hamiltonian(Complex *out, const Complex *state,
                               std::size_t size, std::size_t num_qubits,
                               double field);
