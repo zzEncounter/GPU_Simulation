@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -19,6 +21,90 @@ namespace {
 
 using detail::Complex;
 template <typename T> using DeviceBuffer = detail::DeviceBuffer<T>;
+
+struct StageProfiler {
+    bool enabled;
+    std::vector<std::pair<std::string, double>> timings_ms;
+    cudaEvent_t start{nullptr};
+    cudaEvent_t stop{nullptr};
+
+    explicit StageProfiler(bool enabled_) : enabled(enabled_) {
+        if (!enabled) {
+            return;
+        }
+        detail::check_cuda(cudaEventCreate(&start), "cudaEventCreate profiler start");
+        detail::check_cuda(cudaEventCreate(&stop), "cudaEventCreate profiler stop");
+    }
+
+    StageProfiler(const StageProfiler &) = delete;
+    auto operator=(const StageProfiler &) -> StageProfiler & = delete;
+
+    ~StageProfiler() {
+        if (start != nullptr) {
+            cudaEventDestroy(start);
+        }
+        if (stop != nullptr) {
+            cudaEventDestroy(stop);
+        }
+    }
+};
+
+template <typename Func>
+auto cpu_stage(StageProfiler &profiler, const char *name, Func &&func)
+    -> decltype(func()) {
+    if (!profiler.enabled) {
+        return func();
+    }
+    const auto start = std::chrono::steady_clock::now();
+    if constexpr (std::is_void_v<std::invoke_result_t<Func>>) {
+        func();
+        const auto stop = std::chrono::steady_clock::now();
+        profiler.timings_ms.emplace_back(
+            name,
+            std::chrono::duration<double, std::milli>(stop - start).count());
+    } else {
+        auto result = func();
+        const auto stop = std::chrono::steady_clock::now();
+        profiler.timings_ms.emplace_back(
+            name,
+            std::chrono::duration<double, std::milli>(stop - start).count());
+        return result;
+    }
+}
+
+template <typename Func>
+auto gpu_stage(StageProfiler &profiler, const char *name, Func &&func)
+    -> decltype(func()) {
+    if (!profiler.enabled) {
+        return func();
+    }
+    detail::check_cuda(cudaEventRecord(profiler.start, 0),
+                       "cudaEventRecord profiler start");
+    if constexpr (std::is_void_v<std::invoke_result_t<Func>>) {
+        func();
+        detail::check_cuda(cudaEventRecord(profiler.stop, 0),
+                           "cudaEventRecord profiler stop");
+        detail::check_cuda(cudaEventSynchronize(profiler.stop),
+                           "cudaEventSynchronize profiler stop");
+        float elapsed_ms = 0.0F;
+        detail::check_cuda(
+            cudaEventElapsedTime(&elapsed_ms, profiler.start, profiler.stop),
+            "cudaEventElapsedTime profiler");
+        profiler.timings_ms.emplace_back(name, static_cast<double>(elapsed_ms));
+    } else {
+        auto result = func();
+        detail::check_cuda(cudaEventRecord(profiler.stop, 0),
+                           "cudaEventRecord profiler stop");
+        detail::check_cuda(cudaEventSynchronize(profiler.stop),
+                           "cudaEventSynchronize profiler stop");
+        float elapsed_ms = 0.0F;
+        detail::check_cuda(
+            cudaEventElapsedTime(&elapsed_ms, profiler.start, profiler.stop),
+            "cudaEventElapsedTime profiler");
+        profiler.timings_ms.emplace_back(name, static_cast<double>(elapsed_ms));
+        return result;
+    }
+}
 
 enum class GradientStrategy {
     InverseWalk,
@@ -415,14 +501,15 @@ auto RingIsingCudaBackend::operator=(RingIsingCudaBackend &&) noexcept
 
 auto RingIsingCudaBackend::energy_and_grad(const double *params,
                                            std::size_t num_params,
-                                           bool compute_gradient)
+                                           bool compute_gradient,
+                                           bool profile)
     -> EnergyGradResult {
     if (impl_->strategy == GradientStrategy::BlockFusedAdjoint) {
         return run_energy_and_grad_block_fused_adjoint(*impl_, params, num_params,
                                                        compute_gradient);
     }
     return run_energy_and_grad_checkpointed(*impl_, params, num_params,
-                                            compute_gradient);
+                                            compute_gradient, profile);
 }
 
 EnergyGradResult energy_and_grad(std::size_t num_qubits,
@@ -432,13 +519,14 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  const double *params, std::size_t num_params,
                                  std::size_t checkpoint_interval_ops,
                                  std::size_t intrablock_block_size,
-                                 bool compute_gradient) {
+                                 bool compute_gradient,
+                                 bool profile) {
     RingIsingCudaBackend backend(num_qubits, num_layers, field,
                                  gradient_strategy,
                                  fuse_ring_cnot_layer,
                                  checkpoint_interval_ops,
                                  intrablock_block_size);
-    return backend.energy_and_grad(params, num_params, compute_gradient);
+    return backend.energy_and_grad(params, num_params, compute_gradient, profile);
 }
 
 } // namespace standalone_backend

@@ -77,3 +77,20 @@ class RingIsingAdjointBackend:
         return float(raw["energy"]), np.asarray(
             raw["gradient"], dtype=np.float64
         ).reshape(self.config.param_shape)
+
+    def profile_energy_and_grad(self, params: np.ndarray) -> dict[str, object]:
+        """Evaluate energy/gradient and return a stage timing breakdown."""
+
+        flat = self._normalize_params(params)
+        raw = self._cuda.energy_and_grad(flat, True, True)
+        timings = {
+            str(name): float(value_ms)
+            for name, value_ms in dict(raw.get("timings_ms", {})).items()
+        }
+        return {
+            "energy": float(raw["energy"]),
+            "gradient": np.asarray(raw["gradient"], dtype=np.float64).reshape(
+                self.config.param_shape
+            ),
+            "timings_ms": timings,
+        }

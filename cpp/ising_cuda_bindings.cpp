@@ -44,6 +44,13 @@ auto make_energy_grad_dict(const standalone_backend::EnergyGradResult &result)
     py::dict out;
     out["energy"] = py::float_(result.energy);
     out["gradient"] = std::move(grad);
+    if (!result.stage_timings_ms.empty()) {
+        py::dict timings;
+        for (const auto &[name, value_ms] : result.stage_timings_ms) {
+            timings[py::str(name)] = py::float_(value_ms);
+        }
+        out["timings_ms"] = std::move(timings);
+    }
     return out;
 }
 
@@ -64,18 +71,20 @@ PYBIND11_MODULE(_cuda_backend, m) {
             "energy_and_grad",
             [](standalone_backend::RingIsingCudaBackend &self,
                FlatArray params,
-               bool compute_gradient) {
+               bool compute_gradient,
+               bool profile) {
                 const auto view = view_params(params);
                 standalone_backend::EnergyGradResult result;
                 {
                     py::gil_scoped_release release;
                     result = self.energy_and_grad(view.ptr, view.size,
-                                                  compute_gradient);
+                                                  compute_gradient, profile);
                 }
                 return make_energy_grad_dict(result);
             },
             py::arg("params"),
-            py::arg("compute_gradient") = true)
+            py::arg("compute_gradient") = true,
+            py::arg("profile") = false)
         ;
 
     m.def(
@@ -86,7 +95,8 @@ PYBIND11_MODULE(_cuda_backend, m) {
            std::size_t checkpoint_interval_ops,
            std::size_t intrablock_block_size,
            FlatArray params,
-           bool compute_gradient) {
+           bool compute_gradient,
+           bool profile) {
             validate_params_shape(num_qubits, num_layers, params);
             const auto view = view_params(params);
             standalone_backend::EnergyGradResult result;
@@ -96,7 +106,7 @@ PYBIND11_MODULE(_cuda_backend, m) {
                     num_qubits, num_layers, field, gradient_strategy,
                     fuse_ring_cnot_layer, view.ptr, view.size,
                     checkpoint_interval_ops, intrablock_block_size,
-                    compute_gradient);
+                    compute_gradient, profile);
             }
             return make_energy_grad_dict(result);
         },
@@ -106,6 +116,7 @@ PYBIND11_MODULE(_cuda_backend, m) {
         py::arg("checkpoint_interval_ops") = 0,
         py::arg("intrablock_block_size") = 0,
         py::arg("params"),
-        py::arg("compute_gradient") = true);
+        py::arg("compute_gradient") = true,
+        py::arg("profile") = false);
 
 }

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace standalone_backend {
@@ -10,6 +11,7 @@ namespace standalone_backend {
 struct EnergyGradResult {
     double energy;
     std::vector<double> gradient;
+    std::vector<std::pair<std::string, double>> stage_timings_ms;
 };
 
 class RingIsingCudaBackend {
@@ -31,7 +33,8 @@ class RingIsingCudaBackend {
         -> RingIsingCudaBackend &;
 
     auto energy_and_grad(const double *params, std::size_t num_params,
-                         bool compute_gradient = true) -> EnergyGradResult;
+                         bool compute_gradient = true,
+                         bool profile = false) -> EnergyGradResult;
 
   private:
     std::unique_ptr<Impl> impl_;
@@ -44,6 +47,7 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  const double *params, std::size_t num_params,
                                  std::size_t checkpoint_interval_ops,
                                  std::size_t intrablock_block_size,
-                                 bool compute_gradient = true);
+                                 bool compute_gradient = true,
+                                 bool profile = false);
 
 } // namespace standalone_backend
