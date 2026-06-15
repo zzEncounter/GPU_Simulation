@@ -9,8 +9,6 @@
 
 多人协作说明见 [COLLABORATION.md](./COLLABORATION.md)（当前统一远端：`git@github.com:zzEncounter/GPU_Simulation.git`）。
 
-`intrablock_parallel` 模式的当前实现说明与复杂度分析见 [docs/intrablock_parallel.md](./docs/intrablock_parallel.md)。
-
 ## 目录结构
 
 - `ring_ising/config.py`：统一用户侧运行配置。
@@ -23,6 +21,8 @@
 - `standalone_backend/`：仅保留编译后的 CUDA 扩展模块挂载点。
 - `cpp/`：C++/CUDA 扩展实现。
 - `benchmarks/compare_gradient_strategy.py`：Standalone 梯度策略对比脚本。
+- `benchmarks/profile_baseline_stages.py`：两个 baseline 模式的阶段级耗时剖析脚本。
+- `benchmarks/profile_baseline_kernels.py`：两个 baseline 模式的 kernel 级耗时占比剖析脚本（Nsight Compute）。
 - `tests/test_backends_parity.py`：数值一致性测试。
 - `old/`：历史归档（已从版本控制排除）。
 
@@ -46,16 +46,14 @@
 
 - `inverse_walk`
 - `save_param_states`
-- `checkpoint`
 - `dense_scan`（实验模式，要求 `num_qubits <= 6`）
-- `intrablock_parallel`
 
 补充说明：
 
 - `save_all` 路径已经从对外接口移除。
-- 默认开启 gate fusion。
-- 如需 A/B 对照，可用 `--disable-gate-fusion` 关闭。
-- `inverse_walk` 与 `save_param_states` 现在固定使用与 PennyLane 一致的 `RY -> RZ -> CNOT` 门级结构；这两个模式不会使用电路级 gate fusion。
+- `inverse_walk` 与 `save_param_states` 固定使用与 PennyLane 一致的 `RY -> RZ -> CNOT` 门级结构，不做 gate fusion。
+- `dense_scan` 是保留的特殊实验路径，继续使用它自己的 fused dense gate 结构。
+- `debug/stage-profile` 分支在这两个 baseline 模式上增加了细粒度阶段耗时分析能力，便于后续从基线重新派生新方案。
 
 ## C++/CUDA 拆分状态
 
@@ -101,18 +99,7 @@ python -m venv .venv
 # 指定梯度策略
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy save_param_states
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy inverse_walk
-.venv/bin/python run_workflow.py --backend standalone --gradient-strategy checkpoint
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy dense_scan
-.venv/bin/python run_workflow.py --backend standalone --gradient-strategy intrablock_parallel
-
-# checkpoint 粒度
-.venv/bin/python run_workflow.py --backend standalone --gradient-strategy checkpoint --checkpoint-interval 8
-
-# intrablock_parallel 的 block 大小
-.venv/bin/python run_workflow.py --backend standalone --gradient-strategy intrablock_parallel --intrablock-block-size 64
-
-# 关闭 gate fusion 做对照
-.venv/bin/python run_workflow.py --backend standalone --disable-gate-fusion
 
 # 开启详细 step 报告；默认只显示进度条
 .venv/bin/python run_workflow.py --backend standalone --report-steps
@@ -157,8 +144,27 @@ standalone_result = run(
 ```bash
 .venv/bin/python benchmarks/compare_gradient_strategy.py \
   --cases 4x8 5x32 6x128 \
-  --modes inverse_walk save_param_states checkpoint dense_scan intrablock_parallel \
+  --modes inverse_walk save_param_states dense_scan \
   --reference-mode save_param_states
 ```
 
-`dense_scan` 仅适用于 `qubits <= 6` 的条目。
+阶段级 profiling：
+
+```bash
+.venv/bin/python benchmarks/profile_baseline_stages.py \
+  --cases 12x8 12x32 12x128 \
+  --repeats 20
+```
+
+Kernel 级 profiling：
+
+```bash
+.venv/bin/python benchmarks/profile_baseline_kernels.py \
+  --cases 12x8 12x32 \
+  --profile-count 3 \
+  --csv-out benchmarks/results/baseline_kernel_shares.csv
+```
+
+如果 `ncu` 报 `ERR_NVGPUCTRPERM`，需要先为当前用户开启 NVIDIA GPU performance counter 权限。
+
+`dense_scan` 只适用于 `qubits <= 6` 的条目。

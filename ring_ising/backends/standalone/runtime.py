@@ -16,22 +16,12 @@ class RingIsingAdjointBackend:
         config.validate()
         self.config = config
         self.gradient_strategy = config.normalized_gradient_strategy
-        self.checkpoint_interval_ops = config.resolve_checkpoint_interval_ops(
-            self.gradient_strategy
-        )
-        self.intrablock_block_size = config.resolve_intrablock_block_size(
-            self.gradient_strategy
-        )
         self.uses_pennylane_gate_structure = self.gradient_strategy in {
             "inverse_walk",
             "save_param_states",
         }
-        self.effective_gate_fusion = (
-            False if self.uses_pennylane_gate_structure else self.config.gate_fusion
-        )
         self.estimated_workspace_gib = config.estimated_gradient_workspace_gib_for(
-            self.gradient_strategy,
-            self.checkpoint_interval_ops,
+            self.gradient_strategy
         )
         self._backend = self._load_backend()
         self._cuda = self._backend.RingIsingCudaBackend(
@@ -39,9 +29,6 @@ class RingIsingAdjointBackend:
             self.config.layers,
             float(self.config.field),
             self.gradient_strategy,
-            self.config.gate_fusion,
-            self.checkpoint_interval_ops,
-            self.intrablock_block_size,
         )
 
     @staticmethod

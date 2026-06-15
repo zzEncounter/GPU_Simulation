@@ -9,7 +9,7 @@
 namespace standalone_backend {
 
 struct EnergyGradResult {
-    double energy;
+    double energy{0.0};
     std::vector<double> gradient;
     std::vector<std::pair<std::string, double>> stage_timings_ms;
 };
@@ -19,10 +19,7 @@ class RingIsingCudaBackend {
     struct Impl;
 
     RingIsingCudaBackend(std::size_t num_qubits, std::size_t num_layers,
-                         double field, const std::string &gradient_strategy,
-                         bool fuse_ring_cnot_layer,
-                         std::size_t checkpoint_interval_ops,
-                         std::size_t intrablock_block_size);
+                         double field, const std::string &gradient_strategy);
     ~RingIsingCudaBackend();
 
     RingIsingCudaBackend(const RingIsingCudaBackend &) = delete;
@@ -43,10 +40,7 @@ class RingIsingCudaBackend {
 EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  std::size_t num_layers, double field,
                                  const std::string &gradient_strategy,
-                                 bool fuse_ring_cnot_layer,
                                  const double *params, std::size_t num_params,
-                                 std::size_t checkpoint_interval_ops,
-                                 std::size_t intrablock_block_size,
                                  bool compute_gradient = true,
                                  bool profile = false);
 

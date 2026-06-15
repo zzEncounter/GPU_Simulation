@@ -354,7 +354,7 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     ensure_dense_gate_storage_layout(&impl.dense_storage_cache,
                                      &impl.dense_param_op_indices,
                                      impl.num_qubits, impl.num_layers,
-                                     impl.fuse_ring_cnot_layer);
+                                     true);
     update_dense_gate_storage_params(&impl.dense_storage_cache,
                                      impl.dense_param_op_indices,
                                      impl.num_qubits, params);

@@ -11,13 +11,13 @@ void fill_single_qubit_embedded_matrix(Complex *out, std::size_t dim,
         if ((col & mask) == 0U) {
             const auto row0 = col;
             const auto row1 = col | mask;
-            out[row0 + col * dim] = local[0]; // m00
-            out[row1 + col * dim] = local[1]; // m10
+            out[row0 + col * dim] = local[0];
+            out[row1 + col * dim] = local[1];
         } else {
             const auto row0 = col ^ mask;
             const auto row1 = col;
-            out[row0 + col * dim] = local[2]; // m01
-            out[row1 + col * dim] = local[3]; // m11
+            out[row0 + col * dim] = local[2];
+            out[row1 + col * dim] = local[3];
         }
     }
 }

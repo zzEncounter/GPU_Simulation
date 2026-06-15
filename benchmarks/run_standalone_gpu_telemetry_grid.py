@@ -31,7 +31,7 @@ from ring_ising.runtime._nvidia_smi import (
 )
 
 
-MODES = ("save_param_states", "dense_scan")
+MODES = ("inverse_walk", "save_param_states", "dense_scan")
 QUBITS = (4, 5, 6)
 LAYERS = (8, 32, 128, 512, 2048)
 UTIL_DMON_FIELDS = ["gpu", "sm", "mem", "enc", "dec", "jpg", "ofa"]
@@ -115,6 +115,26 @@ class BenchmarkGpuSummary:
     peak_pcie_rx_kbps: float | None
 
 
+def parse_case(text: str) -> BenchmarkCase:
+    try:
+        qubits_text, layers_text = text.lower().split("x", maxsplit=1)
+        return BenchmarkCase(num_qubits=int(qubits_text), layers=int(layers_text))
+    except Exception as exc:  # pragma: no cover
+        raise argparse.ArgumentTypeError(
+            f"Invalid case {text!r}. Expected format like 12x16."
+        ) from exc
+
+
+def parse_mode(text: str) -> str:
+    mode = text.strip()
+    if mode not in MODES:
+        choices = ", ".join(MODES)
+        raise argparse.ArgumentTypeError(
+            f"Invalid mode {text!r}. Expected one of: {choices}"
+        )
+    return mode
+
+
 def default_steps_for(case: BenchmarkCase) -> int:
     base_steps_by_layers = {8: 120, 32: 80, 128: 40, 512: 12, 2048: 4}
     base = base_steps_by_layers.get(case.layers, max(2, 960 // max(case.layers, 1)))
@@ -123,6 +143,24 @@ def default_steps_for(case: BenchmarkCase) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--cases",
+        nargs="+",
+        type=parse_case,
+        default=[
+            BenchmarkCase(num_qubits=q, layers=l)
+            for q in QUBITS
+            for l in LAYERS
+        ],
+        help="Problem sizes in QxL format.",
+    )
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        type=parse_mode,
+        default=list(MODES),
+        help="Gradient strategies to benchmark.",
+    )
     parser.add_argument("--field", type=float, default=1.0)
     parser.add_argument("--stepsize", type=float, default=0.08)
     parser.add_argument("--seed", type=int, default=7)
@@ -177,13 +215,6 @@ def parse_args() -> argparse.Namespace:
         "--report-steps",
         action="store_true",
         help="Store roughly 60 detailed step metrics per run.",
-    )
-    parser.add_argument(
-        "--disable-gate-fusion",
-        dest="gate_fusion",
-        action="store_false",
-        default=True,
-        help="Disable gate fusion optimizations for A/B comparisons.",
     )
     parser.add_argument(
         "--out-dir",
@@ -610,20 +641,62 @@ def run_internal_ncu_profile_case(args: argparse.Namespace) -> None:
         telemetry_interval_s=args.telemetry_interval,
         telemetry_live=False,
         gradient_strategy=args.internal_mode,
-        gate_fusion=args.gate_fusion,
     )
     result = run_standalone(config)
     print(f"ncu_profile_final_energy={result.final_energy}", file=sys.stderr)
 
 
 def ensure_ncu_available(ncu_path: str) -> str:
-    resolved = shutil.which(ncu_path) if os.path.basename(ncu_path) == ncu_path else ncu_path
-    if resolved is None:
+    if os.path.basename(ncu_path) != ncu_path:
+        candidate = Path(ncu_path).expanduser()
+        if candidate.is_file():
+            return str(candidate)
         raise RuntimeError(
-            "Nsight Compute CLI executable was not found. Install NVIDIA Nsight Compute "
-            "or pass its path with --ncu-path."
+            f"Nsight Compute CLI executable was not found at {candidate}. "
+            "Install NVIDIA Nsight Compute or pass a valid path with --ncu-path."
         )
-    return resolved
+
+    candidates: list[Path] = []
+
+    which_result = shutil.which(ncu_path)
+    if which_result is not None:
+        candidates.append(Path(which_result))
+
+    for env_name in ("CUDA_HOME", "CUDA_PATH"):
+        env_raw = os.environ.get(env_name)
+        if env_raw:
+            candidates.append(Path(env_raw).expanduser() / "bin" / ncu_path)
+
+    nvcc = shutil.which("nvcc")
+    if nvcc is not None:
+        candidates.append(Path(nvcc).resolve().parent.parent / "bin" / ncu_path)
+
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        candidates.append(Path("/home") / sudo_user / "cuda" / "bin" / ncu_path)
+
+    candidates.extend(
+        [
+            Path.home() / "cuda" / "bin" / ncu_path,
+            Path("/usr/local/cuda/bin") / ncu_path,
+        ]
+    )
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file():
+            return str(resolved)
+
+    searched = ", ".join(str(path) for path in seen)
+    raise RuntimeError(
+        "Nsight Compute CLI executable was not found. Install NVIDIA Nsight Compute, "
+        "pass its path with --ncu-path, or make sure one of these paths exists: "
+        f"{searched}"
+    )
 
 
 def run_ncu_profile_case(
@@ -669,9 +742,6 @@ def run_ncu_profile_case(
         "--init-scale",
         str(args.init_scale),
     ]
-    if not args.gate_fusion:
-        command.append("--disable-gate-fusion")
-
     completed = subprocess.run(
         command,
         cwd=ROOT,
@@ -720,6 +790,8 @@ def run_ncu_profile_case(
         )
 
     rows = parse_ncu_raw_csv(completed.stdout)
+    if not rows:
+        rows = parse_ncu_raw_csv(completed.stderr)
     kernel_rows = build_kernel_profile_rows(
         run_id=run_id,
         mode=mode,
@@ -732,7 +804,11 @@ def run_ncu_profile_case(
     if not kernel_rows and not args.allow_incomplete_kernel_profile:
         raise RuntimeError(
             f"Nsight Compute produced no kernel metric rows for {run_id}. "
-            "Check ncu permissions, metric availability, and --ncu-launch-count."
+            "Check ncu permissions, metric availability, whether no kernels were "
+            "captured, and --ncu-launch-count.\n"
+            f"Command: {' '.join(command)}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
         )
     return kernel_rows
 
@@ -784,7 +860,9 @@ def parse_ncu_raw_csv(output: str) -> list[dict[str, str]]:
             parsed = next(csv.reader([line]))
         except csv.Error:
             continue
-        if "Metric Name" in parsed and "Metric Value" in parsed:
+        if ("Metric Name" in parsed and "Metric Value" in parsed) or (
+            "Kernel Name" in parsed and any(metric in parsed for metric in NCU_METRICS)
+        ):
             header_index = index
             break
     if header_index is None:
@@ -804,11 +882,11 @@ def build_kernel_profile_rows(
 ) -> list[dict[str, Any]]:
     by_launch: dict[tuple[str, str], dict[str, Any]] = {}
     for metric_row in metric_rows:
-        metric_name = metric_row.get("Metric Name", "").strip()
-        if metric_name not in NCU_METRICS:
-            continue
         launch_id = metric_row.get("ID", "").strip()
-        kernel_name = metric_row.get("Kernel Name", "").strip()
+        kernel_name = (
+            metric_row.get("Kernel Name", "").strip()
+            or metric_row.get("launch__kernel_name", "").strip()
+        )
         if not launch_id or not kernel_name:
             continue
         key = (launch_id, kernel_name)
@@ -829,7 +907,16 @@ def build_kernel_profile_rows(
                 "ncu_stderr_excerpt": None,
             },
         )
-        row[metric_name] = normalize_ncu_metric_value(metric_row.get("Metric Value", ""))
+
+        metric_name = metric_row.get("Metric Name", "").strip()
+        if metric_name:
+            if metric_name in NCU_METRICS:
+                row[metric_name] = normalize_ncu_metric_value(metric_row.get("Metric Value", ""))
+            continue
+
+        for column_metric in NCU_METRICS:
+            if column_metric in metric_row:
+                row[column_metric] = normalize_ncu_metric_value(metric_row.get(column_metric, ""))
 
     kernel_rows = list(by_launch.values())
     for row in kernel_rows:
@@ -967,6 +1054,20 @@ def main() -> None:
         run_internal_ncu_profile_case(args)
         return
 
+    invalid_dense_cases = [
+        case
+        for case in args.cases
+        if case.num_qubits > 6 and "dense_scan" in args.modes
+    ]
+    if invalid_dense_cases:
+        invalid_text = ", ".join(
+            f"{case.num_qubits}x{case.layers}" for case in invalid_dense_cases
+        )
+        raise ValueError(
+            "dense_scan requires num_qubits <= 6. "
+            f"Unsupported cases: {invalid_text}"
+        )
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = args.prefix or f"standalone_gpu_telemetry_grid_{timestamp}"
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -976,13 +1077,12 @@ def main() -> None:
     kernel_profile_rows: list[dict[str, Any]] = []
     step_rows: list[dict[str, Any]] = []
 
-    cases = [BenchmarkCase(num_qubits=q, layers=l) for q in QUBITS for l in LAYERS]
-    total_runs = len(cases) * len(MODES)
+    cases = list(args.cases)
+    total_runs = len(cases) * len(args.modes)
 
     print("Standalone GPU telemetry benchmark grid")
-    print(f"  Modes: {', '.join(MODES)}")
-    print(f"  Qubits: {', '.join(str(q) for q in QUBITS)}")
-    print(f"  Layers: {', '.join(str(l) for l in LAYERS)}")
+    print(f"  Cases: {', '.join(f'{case.num_qubits}x{case.layers}' for case in cases)}")
+    print(f"  Modes: {', '.join(args.modes)}")
     print(f"  Total runs: {total_runs}")
     print(f"  Telemetry interval: {args.telemetry_interval:.2f} s")
     print(f"  Min telemetry samples per circuit: {args.min_telemetry_samples}")
@@ -1002,7 +1102,7 @@ def main() -> None:
     run_index = 0
     for case in cases:
         steps = default_steps_for(case)
-        for mode in MODES:
+        for mode in args.modes:
             run_index += 1
             run_id = f"q{case.num_qubits}_l{case.layers}_{mode}"
             print(f"[{run_index}/{total_runs}] {run_id}, steps={steps}")
@@ -1044,7 +1144,6 @@ def main() -> None:
                         telemetry_interval_s=args.telemetry_interval,
                         telemetry_live=False,
                         gradient_strategy=mode,
-                        gate_fusion=args.gate_fusion,
                     )
                     results.append(run_standalone(config))
 
@@ -1067,7 +1166,7 @@ def main() -> None:
 
             result = results[-1]
             repeats = len(results)
-            total_wall_s = sum(item.timings.wall_s for item in results)
+            total_wall_s = sum(item.wall_s for item in results)
             avg_step_ms = total_wall_s * 1000.0 / (steps * repeats) if steps and repeats else 0.0
 
             run_rows.append(
@@ -1083,12 +1182,10 @@ def main() -> None:
                     "stepsize": args.stepsize,
                     "seed": args.seed,
                     "init_scale": args.init_scale,
-                    "gate_fusion": args.gate_fusion,
                     "final_energy": result.final_energy,
                     "total_wall_s": total_wall_s,
                     "avg_step_ms": avg_step_ms,
                     "backend_label": result.backend_label,
-                    "checkpoint_interval_ops": result.metadata.get("checkpoint_interval_ops"),
                     "estimated_workspace_gib": result.metadata.get("estimated_workspace_gib"),
                 }
             )

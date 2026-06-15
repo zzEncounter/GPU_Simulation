@@ -65,9 +65,6 @@ def make_backend(case: BenchmarkCase, *, mode: str, field: float) -> RingIsingAd
             layers=case.layers,
             field=field,
             gradient_strategy=mode,
-            checkpoint_interval_ops=None,
-            intrablock_block_size=None,
-            gate_fusion=True,
         )
     )
 

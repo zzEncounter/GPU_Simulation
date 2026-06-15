@@ -47,28 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--gradient-strategy",
         choices=STANDALONE_GRADIENT_STRATEGIES,
         default=DEFAULT_RUN_CONFIG.gradient_strategy,
-        help="Adjoint gradient memory strategy. Only used with --backend standalone.",
-    )
-    parser.add_argument(
-        "--checkpoint-interval",
-        dest="checkpoint_interval_ops",
-        type=int,
-        default=DEFAULT_RUN_CONFIG.checkpoint_interval_ops,
-        help="Number of ops per checkpoint chunk. Only used with checkpoint strategy.",
-    )
-    parser.add_argument(
-        "--intrablock-block-size",
-        dest="intrablock_block_size",
-        type=int,
-        default=DEFAULT_RUN_CONFIG.intrablock_block_size,
-        help="Ops per block for intrablock_parallel. Only used with that strategy.",
-    )
-    parser.add_argument(
-        "--disable-gate-fusion",
-        dest="gate_fusion",
-        action="store_false",
-        default=DEFAULT_RUN_CONFIG.gate_fusion,
-        help="Disable gate fusion optimizations for standalone comparisons.",
+        help="Adjoint gradient baseline strategy. Only used with --backend standalone.",
     )
     parser.add_argument(
         "--report-steps",

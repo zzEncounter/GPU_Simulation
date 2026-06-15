@@ -8,10 +8,7 @@ BACKENDS = ("pennylane", "standalone")
 STANDALONE_GRADIENT_STRATEGIES = (
     "inverse_walk",
     "save_param_states",
-    "checkpoint",
     "dense_scan",
-    "block_fused_adjoint",
-    "intrablock_parallel",
 )
 DEFAULT_PROGRESS_PARTITIONS = 60
 
@@ -34,7 +31,4 @@ class RunConfig:
     gpu_telemetry: bool = False
     telemetry_interval_s: float = 0.5
     telemetry_live: bool = False
-    gradient_strategy: str = "save_param_states"
-    checkpoint_interval_ops: int | None = None
-    intrablock_block_size: int | None = None
-    gate_fusion: bool = True
+    gradient_strategy: str = "inverse_walk"

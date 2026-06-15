@@ -7,8 +7,7 @@ auto run_energy_only(RingIsingCudaBackend::Impl &impl, const double *params,
         profiler, "build_ops_host_ms",
         [&]() {
             return build_ops_for_strategy(impl.num_qubits, impl.num_layers,
-                                          params, impl.strategy,
-                                          impl.fuse_ring_cnot_layer);
+                                          params, impl.strategy);
         });
 
     gpu_stage(profiler, "zero_state_ms", [&]() {
@@ -58,8 +57,7 @@ auto run_energy_and_grad_inverse_walk(RingIsingCudaBackend::Impl &impl,
     });
     gpu_stage(profiler, "forward_apply_ms", [&]() {
         for (const auto &op : ops) {
-            apply_op_inplace(impl.current.get(), impl.state_size, op, false,
-                             impl.scratch.get(), impl.num_qubits);
+            apply_op_inplace(impl.current.get(), impl.state_size, op, false);
         }
     });
     gpu_stage(profiler, "hamiltonian_ms", [&]() {
@@ -227,117 +225,15 @@ auto run_energy_and_grad_save_param_states(
     return result;
 }
 
-auto run_energy_and_grad_checkpointed(RingIsingCudaBackend::Impl &impl,
-                                      const double *params,
-                                      std::size_t num_params,
-                                      bool compute_gradient,
-                                      bool profile)
-    -> EnergyGradResult {
-    validate_num_params(impl.expected_params, num_params);
-
-    if (!compute_gradient) {
-        return run_energy_only(impl, params, num_params, profile);
-    }
-
-    if (impl.strategy == GradientStrategy::DenseScan) {
-        return run_dense_scan_energy_and_grad_fast(impl, params, num_params);
-    }
+auto run_energy_and_grad_baseline(RingIsingCudaBackend::Impl &impl,
+                                  const double *params,
+                                  std::size_t num_params,
+                                  bool compute_gradient,
+                                  bool profile) -> EnergyGradResult {
     if (impl.strategy == GradientStrategy::InverseWalk) {
         return run_energy_and_grad_inverse_walk(impl, params, num_params,
                                                 compute_gradient, profile);
     }
-    if (impl.strategy == GradientStrategy::IntrablockParallel) {
-        return run_intrablock_parallel_energy_and_grad(impl, params, num_params,
-                                                       compute_gradient);
-    }
-
-    const auto ops = build_ring_ops(impl.num_qubits, impl.num_layers, params,
-                                    impl.fuse_ring_cnot_layer);
-    const auto num_ops = ops.size();
-
-    if (impl.strategy == GradientStrategy::SaveParamStates) {
-        return run_energy_and_grad_save_param_states(impl, params, num_params,
-                                                     true, profile);
-    }
-
-    detail::launch_init_zero_state(impl.current.get(), impl.state_size);
-    copy_device_buffer(state_slot(impl.checkpoints.get(), impl.state_size, 0),
-                       impl.current.get(), impl.state_size);
-
-    for (std::size_t chunk_idx = 0; chunk_idx < impl.num_chunks; chunk_idx++) {
-        const auto chunk_start = chunk_idx * impl.checkpoint_interval_ops;
-        const auto chunk_end =
-            std::min(chunk_start + impl.checkpoint_interval_ops, num_ops);
-        apply_ops_range_inplace(impl.current.get(), impl.state_size, ops,
-                                chunk_start, chunk_end, impl.scratch.get(),
-                                impl.num_qubits);
-        copy_device_buffer(
-            state_slot(impl.checkpoints.get(), impl.state_size, chunk_idx + 1),
-            impl.current.get(), impl.state_size);
-    }
-
-    detail::launch_apply_hamiltonian(impl.lambda.get(), impl.current.get(),
-                                     impl.state_size, impl.num_qubits,
-                                     impl.field);
-
-    EnergyGradResult result;
-    result.energy =
-        detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
-                                      impl.state_size)
-            .real();
-    result.gradient.assign(impl.expected_params, 0.0);
-
-    for (std::size_t chunk_idx = impl.num_chunks; chunk_idx-- > 0;) {
-        const auto chunk_start = chunk_idx * impl.checkpoint_interval_ops;
-        const auto chunk_end =
-            std::min(chunk_start + impl.checkpoint_interval_ops, num_ops);
-        const auto local_count = chunk_end - chunk_start;
-
-        copy_device_buffer(impl.current.get(),
-                           state_slot(impl.checkpoints.get(), impl.state_size,
-                                      chunk_idx),
-                           impl.state_size);
-        copy_device_buffer(state_slot(impl.local_states.get(), impl.state_size, 0),
-                           impl.current.get(), impl.state_size);
-        for (std::size_t local_idx = 0; local_idx < local_count; local_idx++) {
-            apply_op_inplace(impl.current.get(), impl.state_size,
-                             ops[chunk_start + local_idx], false,
-                             impl.scratch.get(), impl.num_qubits);
-            copy_device_buffer(
-                state_slot(impl.local_states.get(), impl.state_size,
-                           local_idx + 1),
-                impl.current.get(), impl.state_size);
-        }
-
-        for (std::size_t op_idx = chunk_end; op_idx-- > chunk_start;) {
-            const auto &op = ops[op_idx];
-            const auto local_before = op_idx - chunk_start;
-            if (op.is_parametric) {
-                const Complex *state_before =
-                    state_slot(impl.local_states.get(), impl.state_size,
-                               local_before);
-                if (op.kind == OpKind::FusedRYRZ) {
-                    const auto [grad_theta, grad_phi] = detail::fused_ryrz_gradients(
-                        impl.lambda.get(), state_before, impl.state_size,
-                        op.wire0, op.theta0, op.theta1);
-                    result.gradient[op.param_index0] = grad_theta;
-                    result.gradient[op.param_index1] = grad_phi;
-                } else {
-                    apply_param_derivative(impl.deriv.get(), state_before,
-                                           impl.state_size, op);
-                    const Complex grad_complex =
-                        detail::complex_inner_product(impl.lambda.get(),
-                                                      impl.deriv.get(),
-                                                      impl.state_size);
-                    result.gradient[op.param_index0] = 2.0 * grad_complex.real();
-                }
-            }
-            if (op_idx != 0) {
-                apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
-                                 impl.scratch.get(), impl.num_qubits);
-            }
-        }
-    }
-
-    return result;
+    return run_energy_and_grad_save_param_states(impl, params, num_params,
+                                                 compute_gradient, profile);
 }

@@ -37,7 +37,7 @@ def parse_case(text: str) -> BenchmarkCase:
 def default_steps_for(case: BenchmarkCase) -> int:
     base_steps_by_layers = {8: 120, 32: 80, 128: 40, 512: 12, 2048: 4}
     base = base_steps_by_layers.get(case.layers, max(2, 960 // max(case.layers, 1)))
-    return max(2, int(round(base * 4.0 / case.num_qubits)))
+    return max(2, int(round(base * 6.0 / case.num_qubits)))
 
 
 def parse_mode(text: str) -> str:
@@ -67,8 +67,6 @@ def build_run_config(
         seed=args.seed,
         init_scale=args.init_scale,
         gradient_strategy=mode,
-        intrablock_block_size=args.intrablock_block_size,
-        gate_fusion=args.gate_fusion,
         verbose=False,
         show_progress=False,
         gpu_telemetry=False,
@@ -82,21 +80,8 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         type=parse_case,
         default=[
-            parse_case("4x8"),
-            parse_case("4x32"),
-            parse_case("4x128"),
-            parse_case("4x512"),
-            parse_case("4x2048"),
-            parse_case("5x8"),
-            parse_case("5x32"),
-            parse_case("5x128"),
-            parse_case("5x512"),
-            parse_case("5x2048"),
-            parse_case("6x8"),
-            parse_case("6x32"),
-            parse_case("6x128"),
-            parse_case("6x512"),
-            parse_case("6x2048"),
+            parse_case("12x8"),
+            parse_case("12x32"),
         ],
         help="Problem sizes in QxL format.",
     )
@@ -104,32 +89,19 @@ def parse_args() -> argparse.Namespace:
         "--modes",
         nargs="+",
         type=parse_mode,
-        default=["inverse_walk", "save_param_states", "dense_scan", "intrablock_parallel"],
+        default=["inverse_walk"],
         help="Standalone gradient strategies to compare.",
     )
     parser.add_argument(
         "--reference-mode",
         type=parse_mode,
-        default="save_param_states",
+        default="inverse_walk",
         help="Mode used as the timing and energy reference.",
     )
     parser.add_argument("--field", type=float, default=1.0)
     parser.add_argument("--stepsize", type=float, default=0.08)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--init-scale", type=float, default=0.3)
-    parser.add_argument(
-        "--intrablock-block-size",
-        type=int,
-        default=64,
-        help="Ops per block when benchmarking intrablock_parallel.",
-    )
-    parser.add_argument(
-        "--disable-gate-fusion",
-        dest="gate_fusion",
-        action="store_false",
-        default=True,
-        help="Disable gate fusion optimizations for A/B comparisons.",
-    )
     parser.add_argument("--csv-out", type=Path, default=None)
     return parser.parse_args()
 
@@ -141,14 +113,18 @@ def main() -> None:
     print("Standalone gradient strategy comparison")
     print(f"  Modes: {', '.join(args.modes)}")
     print(f"  Reference mode: {args.reference_mode}")
-    print(f"  Gate fusion enabled: {args.gate_fusion}")
-    print(f"  Intrablock block size: {args.intrablock_block_size}")
     print()
 
     for case in args.cases:
         steps = default_steps_for(case)
         case_rows: list[dict[str, object]] = []
         for mode in args.modes:
+            if mode == "dense_scan" and case.num_qubits > 6:
+                print(
+                    f"Skipping dense_scan for {case.num_qubits} qubits x {case.layers} layers "
+                    "(dense_scan requires qubits <= 6)"
+                )
+                continue
             result = run_standalone(build_run_config(mode, case=case, steps=steps, args=args))
             case_rows.append(
                 {
@@ -161,9 +137,21 @@ def main() -> None:
                 }
             )
 
+        if not case_rows:
+            print(f"{case.num_qubits} qubits x {case.layers} layers, steps={steps}")
+            print("  no runnable modes for this case")
+            print()
+            continue
+
         reference = next(
-            row for row in case_rows if row["mode"] == args.reference_mode
+            (row for row in case_rows if row["mode"] == args.reference_mode),
+            case_rows[0],
         )
+        if reference["mode"] != args.reference_mode:
+            print(
+                f"  reference mode {args.reference_mode} not runnable for this case; "
+                f"falling back to {reference['mode']}"
+            )
         ref_energy = float(reference["final_energy"])
         ref_step_ms = float(reference["avg_step_ms"])
         for row in case_rows:

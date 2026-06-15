@@ -60,13 +60,9 @@ PYBIND11_MODULE(_cuda_backend, m) {
     m.doc() = "Standalone CUDA backend for the ring Ising adjoint workflow.";
 
     py::class_<standalone_backend::RingIsingCudaBackend>(m, "RingIsingCudaBackend")
-        .def(py::init<std::size_t, std::size_t, double, const std::string &, bool,
-                      std::size_t, std::size_t>(),
+        .def(py::init<std::size_t, std::size_t, double, const std::string &>(),
              py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
-             py::arg("gradient_strategy") = "checkpoint",
-             py::arg("fuse_ring_cnot_layer") = true,
-             py::arg("checkpoint_interval_ops") = 0,
-             py::arg("intrablock_block_size") = 0)
+             py::arg("gradient_strategy") = "save_param_states")
         .def(
             "energy_and_grad",
             [](standalone_backend::RingIsingCudaBackend &self,
@@ -91,9 +87,6 @@ PYBIND11_MODULE(_cuda_backend, m) {
         "energy_and_grad",
         [](std::size_t num_qubits, std::size_t num_layers, double field,
            const std::string &gradient_strategy,
-           bool fuse_ring_cnot_layer,
-           std::size_t checkpoint_interval_ops,
-           std::size_t intrablock_block_size,
            FlatArray params,
            bool compute_gradient,
            bool profile) {
@@ -103,18 +96,13 @@ PYBIND11_MODULE(_cuda_backend, m) {
             {
                 py::gil_scoped_release release;
                 result = standalone_backend::energy_and_grad(
-                    num_qubits, num_layers, field, gradient_strategy,
-                    fuse_ring_cnot_layer, view.ptr, view.size,
-                    checkpoint_interval_ops, intrablock_block_size,
-                    compute_gradient, profile);
+                    num_qubits, num_layers, field, gradient_strategy, view.ptr,
+                    view.size, compute_gradient, profile);
             }
             return make_energy_grad_dict(result);
         },
         py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
-        py::arg("gradient_strategy") = "checkpoint",
-        py::arg("fuse_ring_cnot_layer") = true,
-        py::arg("checkpoint_interval_ops") = 0,
-        py::arg("intrablock_block_size") = 0,
+        py::arg("gradient_strategy") = "save_param_states",
         py::arg("params"),
         py::arg("compute_gradient") = true,
         py::arg("profile") = false);

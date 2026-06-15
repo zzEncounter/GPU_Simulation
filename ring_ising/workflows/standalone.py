@@ -39,9 +39,6 @@ def _to_backend_config(config: RunConfig) -> StandaloneBackendConfig:
         layers=config.layers,
         field=config.field,
         gradient_strategy=config.gradient_strategy,
-        checkpoint_interval_ops=config.checkpoint_interval_ops,
-        intrablock_block_size=config.intrablock_block_size,
-        gate_fusion=config.gate_fusion,
     )
 
 
@@ -59,16 +56,10 @@ def print_standalone_runtime_summary(workflow: StandaloneWorkflow, params: np.nd
     print("Runtime:")
     print("  Backend: Standalone CUDA")
     print(f"  Gradient strategy: {workflow.backend.gradient_strategy}")
-    print(f"  Gate fusion enabled: {workflow.backend.effective_gate_fusion}")
     if workflow.backend.uses_pennylane_gate_structure:
         print("  PennyLane-style gate structure: True")
-    if workflow.backend.gradient_strategy == "checkpoint":
-        print(f"  Effective checkpoint interval: {workflow.backend.checkpoint_interval_ops} ops")
-    if workflow.backend.gradient_strategy == "intrablock_parallel":
-        print(
-            "  Effective intrablock block size: "
-            f"{workflow.backend.intrablock_block_size} ops"
-        )
+    else:
+        print("  Dense-scan fused gate structure: True")
     print(
         "  Estimated gradient workspace: "
         f"{workflow.backend.estimated_workspace_gib:.2f} GiB"
@@ -141,10 +132,7 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
             wall_s=total_wall_s,
             metadata={
                 "gradient_strategy": workflow.backend.gradient_strategy,
-                "checkpoint_interval_ops": workflow.backend.checkpoint_interval_ops,
-                "intrablock_block_size": workflow.backend.intrablock_block_size,
                 "estimated_workspace_gib": workflow.backend.estimated_workspace_gib,
-                "gate_fusion": workflow.backend.effective_gate_fusion,
                 "pennylane_gate_structure": workflow.backend.uses_pennylane_gate_structure,
             },
         )
