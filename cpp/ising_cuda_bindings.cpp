@@ -60,9 +60,11 @@ PYBIND11_MODULE(_cuda_backend, m) {
     m.doc() = "Standalone CUDA backend for the ring Ising adjoint workflow.";
 
     py::class_<standalone_backend::RingIsingCudaBackend>(m, "RingIsingCudaBackend")
-        .def(py::init<std::size_t, std::size_t, double, const std::string &>(),
+        .def(py::init<std::size_t, std::size_t, double, const std::string &,
+                      std::size_t>(),
              py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
-             py::arg("gradient_strategy") = "save_param_states")
+             py::arg("gradient_strategy") = "save_param_states",
+             py::arg("mode2_rotation_chunk_width") = 1)
         .def(
             "energy_and_grad",
             [](standalone_backend::RingIsingCudaBackend &self,
@@ -89,7 +91,8 @@ PYBIND11_MODULE(_cuda_backend, m) {
            const std::string &gradient_strategy,
            FlatArray params,
            bool compute_gradient,
-           bool profile) {
+           bool profile,
+           std::size_t mode2_rotation_chunk_width) {
             validate_params_shape(num_qubits, num_layers, params);
             const auto view = view_params(params);
             standalone_backend::EnergyGradResult result;
@@ -97,7 +100,8 @@ PYBIND11_MODULE(_cuda_backend, m) {
                 py::gil_scoped_release release;
                 result = standalone_backend::energy_and_grad(
                     num_qubits, num_layers, field, gradient_strategy, view.ptr,
-                    view.size, compute_gradient, profile);
+                    view.size, compute_gradient, profile,
+                    mode2_rotation_chunk_width);
             }
             return make_energy_grad_dict(result);
         },
@@ -105,6 +109,7 @@ PYBIND11_MODULE(_cuda_backend, m) {
         py::arg("gradient_strategy") = "save_param_states",
         py::arg("params"),
         py::arg("compute_gradient") = true,
-        py::arg("profile") = false);
+        py::arg("profile") = false,
+        py::arg("mode2_rotation_chunk_width") = 1);
 
 }

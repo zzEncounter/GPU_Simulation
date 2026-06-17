@@ -21,11 +21,13 @@ CASES = (
 SEEDS = (123, 321, 2026)
 MODES = (
     "inverse_walk",
+    "mode2",
     "save_param_states",
     "dense_scan",
 )
 TOLERANCES = {
     "inverse_walk": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "mode2": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "save_param_states": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "dense_scan": {"energy_atol": 1e-8, "grad_atol": 1e-7},
 }
@@ -33,6 +35,10 @@ REMOVED_MODES = (
     "checkpoint",
     "block_fused_adjoint",
     "intrablock_parallel",
+    "mode2_chunk2",
+    "mode2_chunk3",
+    "mode2_dense2",
+    "mode2_dense3",
 )
 
 
@@ -67,6 +73,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
         num_qubits: int,
         field: float,
         params: np.ndarray,
+        mode2_width: int = 1,
     ) -> tuple[float, np.ndarray]:
         backend = RingIsingAdjointBackend(
             StandaloneBackendConfig(
@@ -74,6 +81,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 layers=LAYERS,
                 field=field,
                 gradient_strategy=mode,
+                mode2_rotation_chunk_width=mode2_width,
             )
         )
         return backend.energy_and_grad(params)
@@ -117,7 +125,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                             rtol=tolerances["grad_atol"],
                         )
 
-    def test_inverse_walk_matches_save_param_states_beyond_small_reference_cases(self) -> None:
+    def test_inverse_walk_variants_match_save_param_states_beyond_small_reference_cases(self) -> None:
         num_qubits = 8
         field = 0.9
         params = self._make_params(seed=2028, num_qubits=num_qubits)
@@ -128,25 +136,61 @@ class StandaloneBackendParityTest(unittest.TestCase):
             field=field,
             params=params,
         )
-        inverse_energy, inverse_grad = self._standalone_result(
-            mode="inverse_walk",
+        for mode in ("inverse_walk", "mode2"):
+            with self.subTest(mode=mode):
+                energy, grad = self._standalone_result(
+                    mode=mode,
+                    num_qubits=num_qubits,
+                    field=field,
+                    params=params,
+                )
+
+                np.testing.assert_allclose(
+                    energy,
+                    reference_energy,
+                    atol=TOLERANCES[mode]["energy_atol"],
+                    rtol=TOLERANCES[mode]["energy_atol"],
+                )
+                np.testing.assert_allclose(
+                    grad,
+                    reference_grad,
+                    atol=TOLERANCES[mode]["grad_atol"],
+                    rtol=TOLERANCES[mode]["grad_atol"],
+                )
+
+    def test_mode2_rotation_chunk_widths_match_reference(self) -> None:
+        num_qubits = 8
+        field = 0.9
+        params = self._make_params(seed=2030, num_qubits=num_qubits)
+        reference_energy, reference_grad = self._standalone_result(
+            mode="mode2",
             num_qubits=num_qubits,
             field=field,
             params=params,
+            mode2_width=1,
         )
 
-        np.testing.assert_allclose(
-            inverse_energy,
-            reference_energy,
-            atol=TOLERANCES["inverse_walk"]["energy_atol"],
-            rtol=TOLERANCES["inverse_walk"]["energy_atol"],
-        )
-        np.testing.assert_allclose(
-            inverse_grad,
-            reference_grad,
-            atol=TOLERANCES["inverse_walk"]["grad_atol"],
-            rtol=TOLERANCES["inverse_walk"]["grad_atol"],
-        )
+        for width in (2, 3, 4, 8):
+            with self.subTest(mode2_width=width):
+                energy, grad = self._standalone_result(
+                    mode="mode2",
+                    num_qubits=num_qubits,
+                    field=field,
+                    params=params,
+                    mode2_width=width,
+                )
+                np.testing.assert_allclose(
+                    energy,
+                    reference_energy,
+                    atol=TOLERANCES["mode2"]["energy_atol"],
+                    rtol=TOLERANCES["mode2"]["energy_atol"],
+                )
+                np.testing.assert_allclose(
+                    grad,
+                    reference_grad,
+                    atol=TOLERANCES["mode2"]["grad_atol"],
+                    rtol=TOLERANCES["mode2"]["grad_atol"],
+                )
 
     def test_removed_legacy_modes_are_rejected(self) -> None:
         for mode in REMOVED_MODES:
@@ -167,6 +211,18 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 field=1.0,
                 gradient_strategy="dense_scan",
             ).validate()
+
+    def test_mode2_rotation_chunk_width_is_validated(self) -> None:
+        for width in (0, 9):
+            with self.subTest(width=width):
+                with self.assertRaises(ValueError):
+                    StandaloneBackendConfig(
+                        num_qubits=4,
+                        layers=LAYERS,
+                        field=1.0,
+                        gradient_strategy="mode2",
+                        mode2_rotation_chunk_width=width,
+                    ).validate()
 
 
 if __name__ == "__main__":

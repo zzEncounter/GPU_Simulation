@@ -31,7 +31,12 @@ from ring_ising.runtime._nvidia_smi import (
 )
 
 
-MODES = ("inverse_walk", "save_param_states", "dense_scan")
+MODES = (
+    "inverse_walk",
+    "mode2",
+    "save_param_states",
+    "dense_scan",
+)
 QUBITS = (4, 5, 6)
 LAYERS = (8, 32, 128, 512, 2048)
 UTIL_DMON_FIELDS = ["gpu", "sm", "mem", "enc", "dec", "jpg", "ofa"]
@@ -161,6 +166,13 @@ def parse_args() -> argparse.Namespace:
         default=list(MODES),
         help="Gradient strategies to benchmark.",
     )
+    parser.add_argument(
+        "--mode2-widths",
+        nargs="+",
+        type=int,
+        default=[1, 2, 3, 4, 8],
+        help="mode2 structured rotation chunk widths to benchmark.",
+    )
     parser.add_argument("--field", type=float, default=1.0)
     parser.add_argument("--stepsize", type=float, default=0.08)
     parser.add_argument("--seed", type=int, default=7)
@@ -263,6 +275,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--internal-layers", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-steps", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-mode", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--internal-mode2-width", type=int, default=1, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -641,6 +654,7 @@ def run_internal_ncu_profile_case(args: argparse.Namespace) -> None:
         telemetry_interval_s=args.telemetry_interval,
         telemetry_live=False,
         gradient_strategy=args.internal_mode,
+        mode2_rotation_chunk_width=args.internal_mode2_width,
     )
     result = run_standalone(config)
     print(f"ncu_profile_final_energy={result.final_energy}", file=sys.stderr)
@@ -704,6 +718,8 @@ def run_ncu_profile_case(
     args: argparse.Namespace,
     run_id: str,
     mode: str,
+    mode_label: str,
+    mode2_width: int,
     case: BenchmarkCase,
     steps: int,
     profile_index: int,
@@ -733,6 +749,8 @@ def run_ncu_profile_case(
         str(steps),
         "--internal-mode",
         mode,
+        "--internal-mode2-width",
+        str(mode2_width),
         "--field",
         str(args.field),
         "--stepsize",
@@ -753,7 +771,7 @@ def run_ncu_profile_case(
             return [
                 ncu_diagnostic_row(
                     run_id=run_id,
-                    mode=mode,
+                    mode=mode_label,
                     case=case,
                     steps=steps,
                     profile_index=profile_index,
@@ -771,7 +789,7 @@ def run_ncu_profile_case(
             return [
                 ncu_diagnostic_row(
                     run_id=run_id,
-                    mode=mode,
+                    mode=mode_label,
                     case=case,
                     steps=steps,
                     profile_index=profile_index,
@@ -794,7 +812,7 @@ def run_ncu_profile_case(
         rows = parse_ncu_raw_csv(completed.stderr)
     kernel_rows = build_kernel_profile_rows(
         run_id=run_id,
-        mode=mode,
+        mode=mode_label,
         case=case,
         steps=steps,
         profile_index=profile_index,
@@ -1027,6 +1045,16 @@ def base_gpu_row(
     }
 
 
+def mode_specs(modes: list[str], mode2_widths: list[int]) -> list[tuple[str, str, int]]:
+    specs: list[tuple[str, str, int]] = []
+    for mode in modes:
+        if mode == "mode2":
+            specs.extend((f"mode2_w{width}", "mode2", width) for width in mode2_widths)
+        else:
+            specs.append((mode, mode, 1))
+    return specs
+
+
 def write_csv(
     path: Path,
     rows: list[dict[str, Any]],
@@ -1054,10 +1082,12 @@ def main() -> None:
         run_internal_ncu_profile_case(args)
         return
 
+    specs = mode_specs(list(args.modes), list(args.mode2_widths))
+    labels = [label for label, _, _ in specs]
     invalid_dense_cases = [
         case
         for case in args.cases
-        if case.num_qubits > 6 and "dense_scan" in args.modes
+        if case.num_qubits > 6 and "dense_scan" in labels
     ]
     if invalid_dense_cases:
         invalid_text = ", ".join(
@@ -1078,11 +1108,11 @@ def main() -> None:
     step_rows: list[dict[str, Any]] = []
 
     cases = list(args.cases)
-    total_runs = len(cases) * len(args.modes)
+    total_runs = len(cases) * len(specs)
 
     print("Standalone GPU telemetry benchmark grid")
     print(f"  Cases: {', '.join(f'{case.num_qubits}x{case.layers}' for case in cases)}")
-    print(f"  Modes: {', '.join(args.modes)}")
+    print(f"  Modes: {', '.join(labels)}")
     print(f"  Total runs: {total_runs}")
     print(f"  Telemetry interval: {args.telemetry_interval:.2f} s")
     print(f"  Min telemetry samples per circuit: {args.min_telemetry_samples}")
@@ -1102,9 +1132,9 @@ def main() -> None:
     run_index = 0
     for case in cases:
         steps = default_steps_for(case)
-        for mode in args.modes:
+        for mode_label, mode, mode2_width in specs:
             run_index += 1
-            run_id = f"q{case.num_qubits}_l{case.layers}_{mode}"
+            run_id = f"q{case.num_qubits}_l{case.layers}_{mode_label}"
             print(f"[{run_index}/{total_runs}] {run_id}, steps={steps}")
 
             monitor = BenchmarkGpuTelemetryMonitor(
@@ -1144,6 +1174,7 @@ def main() -> None:
                         telemetry_interval_s=args.telemetry_interval,
                         telemetry_live=False,
                         gradient_strategy=mode,
+                        mode2_rotation_chunk_width=mode2_width,
                     )
                     results.append(run_standalone(config))
 
@@ -1172,7 +1203,9 @@ def main() -> None:
             run_rows.append(
                 {
                     "run_id": run_id,
-                    "mode": mode,
+                    "mode": mode_label,
+                    "gradient_strategy": mode,
+                    "mode2_rotation_chunk_width": mode2_width,
                     "num_qubits": case.num_qubits,
                     "layers": case.layers,
                     "steps": steps,
@@ -1192,7 +1225,7 @@ def main() -> None:
             append_gpu_summary_rows(
                 telemetry_rows,
                 run_id=run_id,
-                mode=mode,
+                mode=mode_label,
                 case=case,
                 steps=steps,
                 repeats=repeats,
@@ -1210,6 +1243,8 @@ def main() -> None:
                             args=args,
                             run_id=run_id,
                             mode=mode,
+                            mode_label=mode_label,
+                            mode2_width=mode2_width,
                             case=case,
                             steps=steps,
                             profile_index=profile_index,
@@ -1220,7 +1255,9 @@ def main() -> None:
                     step_rows.append(
                         {
                             "run_id": run_id,
-                            "mode": mode,
+                            "mode": mode_label,
+                            "gradient_strategy": mode,
+                            "mode2_rotation_chunk_width": mode2_width,
                             "num_qubits": case.num_qubits,
                             "layers": case.layers,
                             "repeat": repeat_index,

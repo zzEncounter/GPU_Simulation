@@ -22,7 +22,10 @@ if str(ROOT) not in sys.path:
 from ring_ising.backends.standalone import RingIsingAdjointBackend, StandaloneBackendConfig
 from ring_ising.params import make_initial_params_array
 
-MODES = ("inverse_walk")
+MODES = (
+    "inverse_walk",
+    "mode2",
+)
 NCU_METRICS = ("gpu__time_duration.sum",)
 
 
@@ -79,6 +82,13 @@ def parse_args() -> argparse.Namespace:
         default=list(MODES),
         help="Baseline modes to profile.",
     )
+    parser.add_argument(
+        "--mode2-widths",
+        nargs="+",
+        type=int,
+        default=[1, 2, 3, 4, 8],
+        help="mode2 structured rotation chunk widths to profile.",
+    )
     parser.add_argument("--field", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--init-scale", type=float, default=0.3)
@@ -125,6 +135,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--internal-num-qubits", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-layers", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-mode", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--internal-mode2-width", type=int, default=1, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -270,13 +281,20 @@ def cuda_profiler_stop() -> None:
         raise RuntimeError(f"cudaProfilerStop failed with status {status}.")
 
 
-def make_backend(case: BenchmarkCase, *, mode: str, field: float) -> RingIsingAdjointBackend:
+def make_backend(
+    case: BenchmarkCase,
+    *,
+    mode: str,
+    field: float,
+    mode2_width: int = 1,
+) -> RingIsingAdjointBackend:
     return RingIsingAdjointBackend(
         StandaloneBackendConfig(
             num_qubits=case.num_qubits,
             layers=case.layers,
             field=field,
             gradient_strategy=mode,
+            mode2_rotation_chunk_width=mode2_width,
         )
     )
 
@@ -295,7 +313,12 @@ def run_internal_profile_case(args: argparse.Namespace) -> None:
         raise ValueError(f"Missing internal kernel profile arguments: {', '.join(missing)}")
 
     case = BenchmarkCase(args.internal_num_qubits, args.internal_layers)
-    backend = make_backend(case, mode=args.internal_mode, field=args.field)
+    backend = make_backend(
+        case,
+        mode=args.internal_mode,
+        field=args.field,
+        mode2_width=args.internal_mode2_width,
+    )
     params = make_initial_params_array(
         num_qubits=case.num_qubits,
         layers=case.layers,
@@ -525,10 +548,12 @@ def run_ncu_profile_case(
     args: argparse.Namespace,
     case: BenchmarkCase,
     mode: str,
+    label: str,
+    mode2_width: int,
     profile_index: int,
 ) -> list[dict[str, Any]]:
     ncu_path = ensure_ncu_available(args.ncu_path)
-    run_id = f"q{case.num_qubits}_l{case.layers}_{mode}"
+    run_id = f"q{case.num_qubits}_l{case.layers}_{label}"
     command = [
         ncu_path,
         "--csv",
@@ -553,6 +578,8 @@ def run_ncu_profile_case(
         str(case.layers),
         "--internal-mode",
         mode,
+        "--internal-mode2-width",
+        str(mode2_width),
         "--field",
         str(args.field),
         "--seed",
@@ -600,11 +627,21 @@ def run_ncu_profile_case(
         )
     return build_launch_rows(
         run_id=run_id,
-        mode=mode,
+        mode=label,
         case=case,
         profile_index=profile_index,
         metric_rows=rows,
     )
+
+
+def mode_specs(modes: list[str], mode2_widths: list[int]) -> list[tuple[str, str, int]]:
+    specs: list[tuple[str, str, int]] = []
+    for mode in modes:
+        if mode == "mode2":
+            specs.extend((f"mode2_w{width}", "mode2", width) for width in mode2_widths)
+        else:
+            specs.append((mode, mode, 1))
+    return specs
 
 
 def main() -> None:
@@ -616,12 +653,13 @@ def main() -> None:
     ensure_ncu_available(args.ncu_path)
 
     launch_rows: list[dict[str, Any]] = []
-    total_profiles = len(args.cases) * len(args.modes) * max(0, args.profile_count)
+    specs = mode_specs(list(args.modes), list(args.mode2_widths))
+    total_profiles = len(args.cases) * len(specs) * max(0, args.profile_count)
     current_profile = 0
 
     print("Standalone baseline kernel profiling")
     print(f"  Cases: {', '.join(f'{case.num_qubits}x{case.layers}' for case in args.cases)}")
-    print(f"  Modes: {', '.join(args.modes)}")
+    print(f"  Modes: {', '.join(label for label, _, _ in specs)}")
     print(f"  Warmup: {args.warmup}")
     print(f"  Profile count: {args.profile_count}")
     print(f"  Nsight Compute path: {args.ncu_path}")
@@ -629,10 +667,10 @@ def main() -> None:
     print()
 
     for case in args.cases:
-        for mode in args.modes:
+        for label, mode, mode2_width in specs:
             for profile_index in range(max(0, args.profile_count)):
                 current_profile += 1
-                run_id = f"q{case.num_qubits}_l{case.layers}_{mode}"
+                run_id = f"q{case.num_qubits}_l{case.layers}_{label}"
                 print(
                     f"[{current_profile}/{total_profiles}] "
                     f"{run_id} profile={profile_index + 1}/{args.profile_count}"
@@ -642,6 +680,8 @@ def main() -> None:
                         args=args,
                         case=case,
                         mode=mode,
+                        label=label,
+                        mode2_width=mode2_width,
                         profile_index=profile_index,
                     )
                 )

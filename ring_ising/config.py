@@ -7,9 +7,11 @@ from dataclasses import dataclass
 BACKENDS = ("pennylane", "standalone")
 STANDALONE_GRADIENT_STRATEGIES = (
     "inverse_walk",
+    "mode2",
     "save_param_states",
     "dense_scan",
 )
+MODE2_ROTATION_CHUNK_WIDTH_MAX = 8
 DEFAULT_PROGRESS_PARTITIONS = 60
 
 
@@ -32,3 +34,4 @@ class RunConfig:
     telemetry_interval_s: float = 0.5
     telemetry_live: bool = False
     gradient_strategy: str = "inverse_walk"
+    mode2_rotation_chunk_width: int = 1

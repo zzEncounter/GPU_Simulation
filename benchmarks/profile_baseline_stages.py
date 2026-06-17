@@ -1,4 +1,4 @@
-"""Profile energy_and_grad stage timings for the two baseline standalone modes."""
+"""Profile energy_and_grad stage timings for standalone modes."""
 
 from __future__ import annotations
 
@@ -54,17 +54,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--init-scale", type=float, default=0.3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=20)
+    parser.add_argument(
+        "--mode2-widths",
+        nargs="+",
+        type=int,
+        default=[1, 2, 3, 4, 8],
+        help="mode2 structured rotation chunk widths to benchmark.",
+    )
     parser.add_argument("--csv-out", type=Path, default=None)
     return parser.parse_args()
 
 
-def make_backend(case: BenchmarkCase, *, mode: str, field: float) -> RingIsingAdjointBackend:
+def make_backend(
+    case: BenchmarkCase,
+    *,
+    mode: str,
+    field: float,
+    mode2_width: int = 1,
+) -> RingIsingAdjointBackend:
     return RingIsingAdjointBackend(
         StandaloneBackendConfig(
             num_qubits=case.num_qubits,
             layers=case.layers,
             field=field,
             gradient_strategy=mode,
+            mode2_rotation_chunk_width=mode2_width,
         )
     )
 
@@ -114,22 +128,31 @@ def main() -> None:
             init_scale=args.init_scale,
         )
         print(f"{case.num_qubits} qubits x {case.layers} layers")
-        for mode in ("inverse_walk", "save_param_states"):
-            backend = make_backend(case, mode=mode, field=args.field)
+        mode_specs = [("inverse_walk", "inverse_walk", 1)]
+        mode_specs.extend(
+            (f"mode2_w{width}", "mode2", width)
+            for width in args.mode2_widths
+        )
+        for label, mode, mode2_width in mode_specs:
+            backend = make_backend(
+                case, mode=mode, field=args.field, mode2_width=mode2_width
+            )
             total_median_ms, stages = stage_profile_summary(
                 backend,
                 params,
                 warmup=args.warmup,
                 repeats=args.repeats,
             )
-            print(f"  {mode:<17} total_stage_ms={total_median_ms:.3f}")
+            print(f"  {label:<17} total_stage_ms={total_median_ms:.3f}")
             for name, value_ms in stages.items():
                 print(f"    {name:<24} {value_ms:9.3f}")
                 rows.append(
                     {
                         "num_qubits": case.num_qubits,
                         "layers": case.layers,
-                        "mode": mode,
+                        "mode": label,
+                        "gradient_strategy": mode,
+                        "mode2_rotation_chunk_width": mode2_width,
                         "stage": name,
                         "median_ms": value_ms,
                         "total_stage_ms": total_median_ms,
@@ -146,6 +169,8 @@ def main() -> None:
                     "num_qubits",
                     "layers",
                     "mode",
+                    "gradient_strategy",
+                    "mode2_rotation_chunk_width",
                     "stage",
                     "median_ms",
                     "total_stage_ms",

@@ -45,6 +45,7 @@
 梯度内存策略仅保留：
 
 - `inverse_walk`
+- `mode2`（实验模式：inverse-walk backward + structured/fused forward）
 - `save_param_states`
 - `dense_scan`（实验模式，要求 `num_qubits <= 6`）
 
@@ -52,15 +53,20 @@
 
 - `save_all` 路径已经从对外接口移除。
 - `inverse_walk` 与 `save_param_states` 固定使用与 PennyLane 一致的 `RY -> RZ -> CNOT` 门级结构，不做 gate fusion。
+- `mode2` 保持与 `inverse_walk` 相同的梯度反向遍历，但 forward 阶段合并每个 wire 的 `RY+RZ`，并使用 fused ring-CNOT layer。可通过 `mode2_rotation_chunk_width` / `--mode2-rotation-chunk-width` 调整 structured rotation-layer fusion 宽度；`1` 等价 per-wire fused，`2..8` 表示一次 kernel 顺序融合多个 qubit 的旋转。
 - `dense_scan` 是保留的特殊实验路径，继续使用它自己的 fused dense gate 结构。
-- `debug/stage-profile` 分支在这两个 baseline 模式上增加了细粒度阶段耗时分析能力，便于后续从基线重新派生新方案。
+- `debug/stage-profile` 分支在 baseline/实验模式上增加了细粒度阶段耗时分析能力，便于后续从基线重新派生新方案。
 
 ## C++/CUDA 拆分状态
 
 为提升可维护性，`cpp` 已拆分为：
 
 - `ising_cuda_backend.cu`：调度、策略流程、对外接口。
-- `ising_cuda_kernels.cu`：kernel、launch wrapper、inner product/fused grad。
+- `ising_cuda_kernels.cu`：CUDA runtime 检查、基础 statevector gate、Hamiltonian、inner product。
+- `ising_cuda_rotation_kernels.cu`：`mode2` rotation chunk fusion kernel 与 launch wrapper。
+- `ising_cuda_statevector_grad_kernels.cu`：inverse-walk / save-param statevector 梯度 kernel。
+- `ising_cuda_dense_kernels.cu`：dense scan 与 block simulation kernel。
+- `ising_cuda_kernel_common.cuh`：kernel 翻译单元共享的常量与 device helper。
 - `ising_cuda_backend_internal.cuh`：内部共享类型与函数声明。
 - `ising_cuda_bindings.cpp`：pybind11 绑定。
 
@@ -99,6 +105,8 @@ python -m venv .venv
 # 指定梯度策略
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy save_param_states
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy inverse_walk
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy mode2
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy mode2 --mode2-rotation-chunk-width 3
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy dense_scan
 
 # 开启详细 step 报告；默认只显示进度条
@@ -144,8 +152,8 @@ standalone_result = run(
 ```bash
 .venv/bin/python benchmarks/compare_gradient_strategy.py \
   --cases 4x8 5x32 6x128 \
-  --modes inverse_walk save_param_states dense_scan \
-  --reference-mode save_param_states
+  --modes inverse_walk mode2 save_param_states dense_scan \
+  --reference-mode inverse_walk
 ```
 
 阶段级 profiling：

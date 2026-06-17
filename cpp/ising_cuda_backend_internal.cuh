@@ -105,6 +105,16 @@ void launch_apply_ring_cnot_layer(Complex *out, const Complex *in,
 void launch_apply_ryrz(Complex *state, std::size_t size, std::size_t wire,
                        double theta_ry, double theta_rz,
                        bool inverse = false);
+void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
+                                      std::size_t chunk_start,
+                                      std::size_t chunk_width,
+                                      const double *theta_ry,
+                                      const double *theta_rz);
+void launch_apply_ryrz_rotation_dense_chunk(Complex *state, std::size_t size,
+                                            std::size_t chunk_start,
+                                            std::size_t chunk_width,
+                                            const double *theta_ry,
+                                            const double *theta_rz);
 void launch_inverse_walk_ry_step(Complex *current, Complex *lambda,
                                  std::size_t size, std::size_t wire,
                                  double theta, double *out_gradient);

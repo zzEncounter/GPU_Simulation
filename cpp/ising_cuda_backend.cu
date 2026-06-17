@@ -107,9 +107,16 @@ auto gpu_stage(StageProfiler &profiler, const char *name, Func &&func)
 
 enum class GradientStrategy {
     InverseWalk,
+    Mode2,
     SaveParamStates,
     DenseScan
 };
+
+constexpr std::size_t MODE2_ROTATION_CHUNK_WIRES = 8;
+
+auto is_mode2_family(GradientStrategy strategy) -> bool {
+    return strategy == GradientStrategy::Mode2;
+}
 
 auto build_ring_ops(std::size_t num_qubits, std::size_t num_layers,
                     const double *params,
@@ -244,12 +251,15 @@ auto parse_gradient_strategy(const std::string &strategy)
     if (strategy == "inverse_walk") {
         return GradientStrategy::InverseWalk;
     }
+    if (strategy == "mode2") {
+        return GradientStrategy::Mode2;
+    }
     if (strategy == "dense_scan") {
         return GradientStrategy::DenseScan;
     }
     throw std::invalid_argument(
         "Unknown gradient strategy. Expected one of: inverse_walk, "
-        "save_param_states, dense_scan.");
+        "mode2, save_param_states, dense_scan.");
 }
 
 struct CublasHandle {
@@ -306,6 +316,7 @@ struct RingIsingCudaBackend::Impl {
     std::size_t state_size;
     std::size_t num_ops;
     GradientStrategy strategy;
+    std::size_t mode2_rotation_chunk_width;
     DeviceBuffer<Complex> current;
     DeviceBuffer<Complex> lambda;
     DeviceBuffer<Complex> scratch;
@@ -334,15 +345,27 @@ struct RingIsingCudaBackend::Impl {
     bool dense_static_device_uploaded{false};
 
     Impl(std::size_t num_qubits_, std::size_t num_layers_, double field_,
-         const std::string &gradient_strategy_)
+         const std::string &gradient_strategy_,
+         std::size_t mode2_rotation_chunk_width_)
         : num_qubits(num_qubits_), num_layers(num_layers_), field(field_),
           expected_params(num_qubits_ * num_layers_ * 2),
           state_size(validate_and_get_state_size(num_qubits_, num_layers_,
                                                  num_qubits_ * num_layers_ * 2)),
           num_ops(num_layers_ * (num_qubits_ + 1)),
           strategy(parse_gradient_strategy(gradient_strategy_)),
+          mode2_rotation_chunk_width(mode2_rotation_chunk_width_),
           current(state_size), lambda(state_size), scratch(state_size),
           gate_level_gradients(expected_params) {
+        if (strategy == GradientStrategy::Mode2 &&
+            mode2_rotation_chunk_width == 0) {
+            throw std::invalid_argument(
+                "mode2_rotation_chunk_width must be at least 1.");
+        }
+        if (strategy == GradientStrategy::Mode2 &&
+            mode2_rotation_chunk_width > MODE2_ROTATION_CHUNK_WIRES) {
+            throw std::invalid_argument(
+                "mode2_rotation_chunk_width exceeds supported maximum.");
+        }
         if (strategy == GradientStrategy::SaveParamStates) {
             save_param_states.allocate(expected_params * state_size);
         }
@@ -356,9 +379,11 @@ struct RingIsingCudaBackend::Impl {
 RingIsingCudaBackend::RingIsingCudaBackend(std::size_t num_qubits,
                                            std::size_t num_layers,
                                            double field,
-                                           const std::string &gradient_strategy)
+                                           const std::string &gradient_strategy,
+                                           std::size_t mode2_rotation_chunk_width)
     : impl_(std::make_unique<Impl>(num_qubits, num_layers, field,
-                                   gradient_strategy)) {}
+                                   gradient_strategy,
+                                   mode2_rotation_chunk_width)) {}
 
 RingIsingCudaBackend::~RingIsingCudaBackend() = default;
 
@@ -388,9 +413,11 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  const std::string &gradient_strategy,
                                  const double *params, std::size_t num_params,
                                  bool compute_gradient,
-                                 bool profile) {
+                                 bool profile,
+                                 std::size_t mode2_rotation_chunk_width) {
     RingIsingCudaBackend backend(num_qubits, num_layers, field,
-                                 gradient_strategy);
+                                 gradient_strategy,
+                                 mode2_rotation_chunk_width);
     return backend.energy_and_grad(params, num_params, compute_gradient, profile);
 }
 

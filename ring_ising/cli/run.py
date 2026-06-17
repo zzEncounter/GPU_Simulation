@@ -9,7 +9,12 @@ from ring_ising.cli.common import (
     add_problem_args,
     add_telemetry_args,
 )
-from ring_ising.config import BACKENDS, RunConfig, STANDALONE_GRADIENT_STRATEGIES
+from ring_ising.config import (
+    BACKENDS,
+    MODE2_ROTATION_CHUNK_WIDTH_MAX,
+    RunConfig,
+    STANDALONE_GRADIENT_STRATEGIES,
+)
 from ring_ising.workflows import run
 
 DEFAULT_RUN_CONFIG = RunConfig()
@@ -48,6 +53,16 @@ def parse_args() -> argparse.Namespace:
         choices=STANDALONE_GRADIENT_STRATEGIES,
         default=DEFAULT_RUN_CONFIG.gradient_strategy,
         help="Adjoint gradient baseline strategy. Only used with --backend standalone.",
+    )
+    parser.add_argument(
+        "--mode2-rotation-chunk-width",
+        type=int,
+        choices=range(1, MODE2_ROTATION_CHUNK_WIDTH_MAX + 1),
+        default=DEFAULT_RUN_CONFIG.mode2_rotation_chunk_width,
+        metavar=f"1..{MODE2_ROTATION_CHUNK_WIDTH_MAX}",
+        help=(
+            "Structured rotation-layer fusion width for --gradient-strategy mode2."
+        ),
     )
     parser.add_argument(
         "--report-steps",

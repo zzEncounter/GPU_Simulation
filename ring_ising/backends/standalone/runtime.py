@@ -18,6 +18,7 @@ class RingIsingAdjointBackend:
         self.gradient_strategy = config.normalized_gradient_strategy
         self.uses_pennylane_gate_structure = self.gradient_strategy in {
             "inverse_walk",
+            "mode2",
             "save_param_states",
         }
         self.estimated_workspace_gib = config.estimated_gradient_workspace_gib_for(
@@ -29,6 +30,7 @@ class RingIsingAdjointBackend:
             self.config.layers,
             float(self.config.field),
             self.gradient_strategy,
+            int(self.config.mode2_rotation_chunk_width),
         )
 
     @staticmethod
