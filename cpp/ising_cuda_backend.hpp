@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace standalone_backend {
@@ -10,6 +11,7 @@ namespace standalone_backend {
 struct EnergyGradResult {
     double energy;
     std::vector<double> gradient;
+    std::vector<std::pair<std::string, double>> timings_s;
 };
 
 class RingIsingCudaBackend {

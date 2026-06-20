@@ -44,6 +44,11 @@ auto make_energy_grad_dict(const standalone_backend::EnergyGradResult &result)
     py::dict out;
     out["energy"] = py::float_(result.energy);
     out["gradient"] = std::move(grad);
+    py::dict timings;
+    for (const auto &entry : result.timings_s) {
+        timings[py::str(entry.first)] = py::float_(entry.second);
+    }
+    out["timings_s"] = std::move(timings);
     return out;
 }
 

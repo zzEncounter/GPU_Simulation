@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+from collections import defaultdict
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -43,6 +45,8 @@ class RingIsingAdjointBackend:
             self.checkpoint_interval_ops,
             self.intrablock_block_size,
         )
+        self._timing_totals_s: defaultdict[str, float] = defaultdict(float)
+        self._timing_counts: defaultdict[str, int] = defaultdict(int)
 
     @staticmethod
     def _load_backend():
@@ -69,11 +73,32 @@ class RingIsingAdjointBackend:
         raw = self._cuda.energy_and_grad(flat, False)
         return float(raw["energy"])
 
+    def _record_timings(self, raw: Mapping[str, object]) -> None:
+        timings = raw.get("timings_s", {})
+        if not isinstance(timings, Mapping):
+            return
+        for key, value in timings.items():
+            self._timing_totals_s[str(key)] += float(value)
+            self._timing_counts[str(key)] += 1
+
+    @property
+    def timing_totals_s(self) -> dict[str, float]:
+        """Return cumulative backend timings recorded during gradient calls."""
+
+        return dict(self._timing_totals_s)
+
+    @property
+    def timing_counts(self) -> dict[str, int]:
+        """Return per-timing sample counts recorded during gradient calls."""
+
+        return dict(self._timing_counts)
+
     def energy_and_grad(self, params: np.ndarray) -> tuple[float, np.ndarray]:
         """Evaluate the Ising energy and gradient."""
 
         flat = self._normalize_params(params)
         raw = self._cuda.energy_and_grad(flat)
+        self._record_timings(raw)
         return float(raw["energy"]), np.asarray(
             raw["gradient"], dtype=np.float64
         ).reshape(self.config.param_shape)

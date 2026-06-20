@@ -9,6 +9,8 @@ from ring_ising.config import STANDALONE_GRADIENT_STRATEGIES
 
 
 def normalize_strategy_name(strategy: str) -> str:
+    if strategy == "reverse_walk":
+        return "inverse_walk"
     if strategy == "bruteforce_parallel_q6":
         return "dense_scan"
     return strategy
@@ -107,7 +109,7 @@ class StandaloneBackendConfig:
             return (num_blocks + 1) * 2 + num_blocks * (block_size + 1) + 4
         if strategy != "checkpoint" and strategy != "block_fused_adjoint":
             raise ValueError(
-                "strategy must be 'inverse_walk', 'save_param_states', "
+                "strategy must be 'inverse_walk', 'reverse_walk', 'save_param_states', "
                 "'checkpoint', 'dense_scan', 'block_fused_adjoint', or "
                 "'intrablock_parallel'."
             )
@@ -175,7 +177,8 @@ class StandaloneBackendConfig:
             raise ValueError("layers must be at least 1.")
         if strategy not in STANDALONE_GRADIENT_STRATEGIES:
             raise ValueError(
-                "gradient_strategy must be 'inverse_walk', 'save_param_states', "
+                "gradient_strategy must be 'inverse_walk', 'reverse_walk', "
+                "'save_param_states', "
                 "'checkpoint', 'dense_scan', 'block_fused_adjoint', or "
                 "'intrablock_parallel'."
             )

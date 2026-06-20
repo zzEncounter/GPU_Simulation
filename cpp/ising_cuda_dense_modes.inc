@@ -261,9 +261,16 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     }
     auto &cublas = *impl.dense_cublas;
 
+    const auto buffer_setup_start = Clock::now();
     ensure_dense_scan_buffers(impl, storage);
-    upload_dense_scan_inputs(impl, storage);
+    const auto buffer_setup_end =
+        sync_clock_now("dense scan buffer setup timing sync");
 
+    const auto upload_start = Clock::now();
+    upload_dense_scan_inputs(impl, storage);
+    const auto upload_end = sync_clock_now("dense scan upload timing sync");
+
+    const auto forward_start = Clock::now();
     build_dense_product_tree(impl, num_ops, dim);
     Complex *root_matrix = product_tree_level_ptr(impl, padded, 1);
     detail::check_cuda(cudaMemcpyAsync(impl.dense_total_matrix.get(), root_matrix,
@@ -309,6 +316,9 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     const Complex energy_complex =
         detail::complex_inner_product(impl.dense_forward_states.get() + num_ops * dim,
                                       impl.dense_lambda_k.get(), dim);
+    const auto forward_end = sync_clock_now("dense scan forward timing sync");
+
+    const auto backward_start = Clock::now();
     {
         const Complex alpha(1.0, 0.0);
         const Complex beta(0.0, 0.0);
@@ -328,6 +338,9 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
             "tree eta = T^H * lambda_k");
     }
     run_dense_vector_downsweep(impl, num_ops, dim);
+    const auto backward_end = sync_clock_now("dense scan backward timing sync");
+
+    const auto gradient_start = Clock::now();
     run_dense_gradient_tail(impl, num_params_local, dim);
 
     std::vector<double> gradients(num_params_local, 0.0);
@@ -335,10 +348,16 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
         cudaMemcpy(gradients.data(), impl.dense_gradients.get(),
                    sizeof(double) * gradients.size(), cudaMemcpyDeviceToHost),
         "copy gradients to host");
+    const auto gradient_end = Clock::now();
 
     DenseScanGpuRunResult result;
     result.energy = energy_complex.real();
     result.gradient = std::move(gradients);
+    result.buffer_setup_s = elapsed_seconds(buffer_setup_start, buffer_setup_end);
+    result.upload_s = elapsed_seconds(upload_start, upload_end);
+    result.forward_s = elapsed_seconds(forward_start, forward_end);
+    result.backward_s = elapsed_seconds(backward_start, backward_end);
+    result.gradient_s = elapsed_seconds(gradient_start, gradient_end);
     return result;
 }
 
@@ -351,6 +370,7 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     }
     validate_num_params(impl.expected_params, num_params);
 
+    const auto matrix_start = Clock::now();
     ensure_dense_gate_storage_layout(&impl.dense_storage_cache,
                                      &impl.dense_param_op_indices,
                                      impl.num_qubits, impl.num_layers,
@@ -358,10 +378,19 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
     update_dense_gate_storage_params(&impl.dense_storage_cache,
                                      impl.dense_param_op_indices,
                                      impl.num_qubits, params);
+    const auto matrix_end = Clock::now();
+
     auto gpu = run_dense_scan_gpu_pipeline(impl, impl.dense_storage_cache);
 
     EnergyGradResult result;
     result.energy = gpu.energy;
     result.gradient = std::move(gpu.gradient);
+    result.timings_s.emplace_back(
+        "dense_vector_to_matrix_s", elapsed_seconds(matrix_start, matrix_end));
+    result.timings_s.emplace_back("dense_buffer_setup_s", gpu.buffer_setup_s);
+    result.timings_s.emplace_back("dense_upload_s", gpu.upload_s);
+    result.timings_s.emplace_back("forward_s", gpu.forward_s);
+    result.timings_s.emplace_back("backward_s", gpu.backward_s);
+    result.timings_s.emplace_back("gradient_s", gpu.gradient_s);
     return result;
 }

@@ -170,6 +170,11 @@ struct DenseGateStorage {
 struct DenseScanGpuRunResult {
     double energy{0.0};
     std::vector<double> gradient;
+    double buffer_setup_s{0.0};
+    double upload_s{0.0};
+    double forward_s{0.0};
+    double backward_s{0.0};
+    double gradient_s{0.0};
 };
 
 void ensure_dense_gate_storage_layout(DenseGateStorage *storage,

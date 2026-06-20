@@ -104,7 +104,12 @@ def parse_args() -> argparse.Namespace:
         "--modes",
         nargs="+",
         type=parse_mode,
-        default=["inverse_walk", "save_param_states", "dense_scan", "intrablock_parallel"],
+        default=[
+            "reverse_walk",
+            "save_param_states",
+            "dense_scan",
+            "intrablock_parallel",
+        ],
         help="Standalone gradient strategies to compare.",
     )
     parser.add_argument(

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 BACKENDS = ("pennylane", "standalone")
 STANDALONE_GRADIENT_STRATEGIES = (
     "inverse_walk",
+    "reverse_walk",
     "save_param_states",
     "checkpoint",
     "dense_scan",

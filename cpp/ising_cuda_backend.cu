@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,16 @@ namespace {
 
 using detail::Complex;
 template <typename T> using DeviceBuffer = detail::DeviceBuffer<T>;
+using Clock = std::chrono::steady_clock;
+
+auto elapsed_seconds(Clock::time_point start, Clock::time_point end) -> double {
+    return std::chrono::duration<double>(end - start).count();
+}
+
+auto sync_clock_now(const char *context) -> Clock::time_point {
+    detail::check_cuda(cudaDeviceSynchronize(), context);
+    return Clock::now();
+}
 
 enum class GradientStrategy {
     InverseWalk,
@@ -196,7 +207,7 @@ auto parse_gradient_strategy(const std::string &strategy)
     if (strategy == "save_param_states") {
         return GradientStrategy::SaveParamStates;
     }
-    if (strategy == "inverse_walk") {
+    if (strategy == "inverse_walk" || strategy == "reverse_walk") {
         return GradientStrategy::InverseWalk;
     }
     if (strategy == "checkpoint") {
@@ -216,7 +227,7 @@ auto parse_gradient_strategy(const std::string &strategy)
     }
     throw std::invalid_argument(
         "Unknown gradient strategy. Expected one of: "
-        "inverse_walk, save_param_states, checkpoint, dense_scan, "
+        "inverse_walk, reverse_walk, save_param_states, checkpoint, dense_scan, "
         "block_fused_adjoint, intrablock_parallel.");
 }
 

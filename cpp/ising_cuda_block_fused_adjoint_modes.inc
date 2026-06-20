@@ -148,6 +148,7 @@ auto run_energy_and_grad_block_fused_adjoint(
                                     impl.fuse_ring_cnot_layer);
     const auto num_ops = ops.size();
 
+    const auto forward_start = Clock::now();
     detail::launch_init_zero_state(impl.current.get(), impl.state_size);
     copy_device_buffer(state_slot(impl.checkpoints.get(), impl.state_size, 0),
                        impl.current.get(), impl.state_size);
@@ -163,7 +164,10 @@ auto run_energy_and_grad_block_fused_adjoint(
             state_slot(impl.checkpoints.get(), impl.state_size, block_idx + 1),
             impl.current.get(), impl.state_size);
     }
+    const auto forward_end =
+        sync_clock_now("block_fused_adjoint forward timing sync");
 
+    const auto backward_start = Clock::now();
     detail::launch_apply_hamiltonian(impl.lambda.get(), impl.current.get(),
                                      impl.state_size, impl.num_qubits,
                                      impl.field);
@@ -173,10 +177,19 @@ auto run_energy_and_grad_block_fused_adjoint(
         detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
                                       impl.state_size)
             .real();
+    const auto backward_after_energy =
+        sync_clock_now("block_fused_adjoint energy timing sync");
+
     result.gradient.assign(impl.expected_params, 0.0);
+    const auto gradient_zero_start = Clock::now();
     detail::check_cuda(cudaMemsetAsync(impl.block_fused_gradients.get(), 0,
                                        sizeof(double) * impl.expected_params, 0),
                        "zero block fused gradients");
+    const auto gradient_zero_end =
+        sync_clock_now("block_fused_adjoint zero gradient timing sync");
+
+    double backward_s = elapsed_seconds(backward_start, backward_after_energy);
+    double gradient_s = elapsed_seconds(gradient_zero_start, gradient_zero_end);
 
     for (std::size_t block_idx = impl.num_chunks; block_idx-- > 0;) {
         const auto block_start = block_idx * impl.checkpoint_interval_ops;
@@ -184,6 +197,7 @@ auto run_energy_and_grad_block_fused_adjoint(
             std::min(block_start + impl.checkpoint_interval_ops, num_ops);
         const auto local_count = block_end - block_start;
 
+        const auto local_replay_start = Clock::now();
         copy_device_buffer(impl.current.get(),
                            state_slot(impl.checkpoints.get(), impl.state_size,
                                       block_idx),
@@ -200,6 +214,9 @@ auto run_energy_and_grad_block_fused_adjoint(
                            local_idx + 1),
                 impl.current.get(), impl.state_size);
         }
+        const auto local_replay_end =
+            sync_clock_now("block_fused_adjoint local replay timing sync");
+        gradient_s += elapsed_seconds(local_replay_start, local_replay_end);
 
         std::size_t current_op = block_end;
         while (current_op > block_start) {
@@ -217,19 +234,34 @@ auto run_energy_and_grad_block_fused_adjoint(
                 for (std::size_t reverse_idx = current_op;
                      reverse_idx-- > run_start;) {
                     const auto slot = reverse_idx - run_start;
+                    const auto lambda_staging_start = Clock::now();
                     copy_device_buffer(
                         state_slot(impl.block_fused_lambda_states.get(),
                                    impl.state_size, slot),
                         impl.lambda.get(), impl.state_size);
+                    const auto lambda_staging_end = sync_clock_now(
+                        "block_fused_adjoint lambda staging timing sync");
+                    gradient_s +=
+                        elapsed_seconds(lambda_staging_start, lambda_staging_end);
                     if (reverse_idx != 0) {
+                        const auto backward_step_start = Clock::now();
                         apply_op_inplace(impl.lambda.get(), impl.state_size,
                                          ops[reverse_idx], true,
                                          impl.scratch.get(), impl.num_qubits);
+                        const auto backward_step_end = sync_clock_now(
+                            "block_fused_adjoint backward timing sync");
+                        backward_s +=
+                            elapsed_seconds(backward_step_start, backward_step_end);
                     }
                 }
 
+                const auto gradient_kernel_start = Clock::now();
                 launch_block_fused_ryrz_gradients(impl, run_start, block_start,
                                                   run_count, ops);
+                const auto gradient_kernel_end = sync_clock_now(
+                    "block_fused_adjoint fused gradient timing sync");
+                gradient_s +=
+                    elapsed_seconds(gradient_kernel_start, gradient_kernel_end);
                 current_op = run_start;
                 continue;
             }
@@ -237,6 +269,7 @@ auto run_energy_and_grad_block_fused_adjoint(
             const auto local_before = op_idx - block_start;
 
             if (op.is_parametric) {
+                const auto scalar_gradient_start = Clock::now();
                 const Complex *state_before =
                     state_slot(impl.local_states.get(), impl.state_size,
                                local_before);
@@ -256,21 +289,38 @@ auto run_energy_and_grad_block_fused_adjoint(
                     store_scalar_gradient(impl, op.param_index0,
                                           2.0 * grad_complex.real());
                 }
+                const auto scalar_gradient_end = sync_clock_now(
+                    "block_fused_adjoint scalar gradient timing sync");
+                gradient_s +=
+                    elapsed_seconds(scalar_gradient_start, scalar_gradient_end);
             }
 
             if (op_idx != 0) {
+                const auto backward_step_start = Clock::now();
                 apply_op_inplace(impl.lambda.get(), impl.state_size, op, true,
                                  impl.scratch.get(), impl.num_qubits);
+                const auto backward_step_end = sync_clock_now(
+                    "block_fused_adjoint backward timing sync");
+                backward_s +=
+                    elapsed_seconds(backward_step_start, backward_step_end);
             }
             current_op = op_idx;
         }
     }
 
+    const auto gradient_copy_start = Clock::now();
     detail::check_cuda(cudaMemcpy(result.gradient.data(),
                                   impl.block_fused_gradients.get(),
                                   sizeof(double) * result.gradient.size(),
                                   cudaMemcpyDeviceToHost),
                        "copy block fused gradients to host");
+    const auto gradient_copy_end = Clock::now();
+    gradient_s += elapsed_seconds(gradient_copy_start, gradient_copy_end);
+
+    result.timings_s.emplace_back(
+        "forward_s", elapsed_seconds(forward_start, forward_end));
+    result.timings_s.emplace_back("backward_s", backward_s);
+    result.timings_s.emplace_back("gradient_s", gradient_s);
 
     return result;
 }

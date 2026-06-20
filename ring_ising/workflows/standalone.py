@@ -146,6 +146,8 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
                 "estimated_workspace_gib": workflow.backend.estimated_workspace_gib,
                 "gate_fusion": workflow.backend.effective_gate_fusion,
                 "pennylane_gate_structure": workflow.backend.uses_pennylane_gate_structure,
+                "backend_timing_totals_s": workflow.backend.timing_totals_s,
+                "backend_timing_counts": workflow.backend.timing_counts,
             },
         )
 
