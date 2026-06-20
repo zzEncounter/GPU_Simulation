@@ -184,10 +184,10 @@ __global__ void apply_ring_cnot_layer_kernel(Complex *out, const Complex *in,
     out[transformed] = in[index];
 }
 
+template <bool Inverse>
 __global__ void apply_ryrz_kernel(Complex *state, std::size_t size,
                                   std::size_t wire, double c, double s,
-                                  double cos_half, double sin_half,
-                                  bool inverse) {
+                                  double cos_half, double sin_half) {
     const auto half_stride = std::size_t{1} << wire;
     const auto pair_index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
                                                      threadIdx.x);
@@ -208,7 +208,7 @@ __global__ void apply_ryrz_kernel(Complex *state, std::size_t size,
     const double a1_r = a1.real();
     const double a1_i = a1.imag();
 
-    if (!inverse) {
+    if constexpr (!Inverse) {
         const double b0_r = c * a0_r - s * a1_r;
         const double b0_i = c * a0_i - s * a1_i;
         const double b1_r = s * a0_r + c * a1_r;
@@ -328,8 +328,13 @@ void launch_apply_ryrz(Complex *state, std::size_t size, std::size_t wire,
     const double half_phi = theta_rz * 0.5;
     const double cos_half = std::cos(half_phi);
     const double sin_half = std::sin(half_phi);
-    apply_ryrz_kernel<<<blocks, THREADS>>>(state, size, wire, c, s, cos_half,
-                                           sin_half, inverse);
+    if (inverse) {
+        apply_ryrz_kernel<true><<<blocks, THREADS>>>(
+            state, size, wire, c, s, cos_half, sin_half);
+    } else {
+        apply_ryrz_kernel<false><<<blocks, THREADS>>>(
+            state, size, wire, c, s, cos_half, sin_half);
+    }
     check_cuda(cudaGetLastError(), "apply_ryrz_kernel");
     maybe_synchronize_cuda("apply_ryrz_kernel sync");
 }

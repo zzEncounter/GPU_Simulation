@@ -43,9 +43,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         type=parse_case,
         default=[parse_case("12x8"), parse_case("12x32"), parse_case("12x128"),
-                 parse_case("14x8"), parse_case("14x32"), parse_case("14x128"),
                  parse_case("16x4"), parse_case("16x8"), parse_case("16x16"),
-                 parse_case("18x4"), parse_case("18x8"), parse_case("18x16"),
                  parse_case("20x2"), parse_case("20x4"), parse_case("20x8"),],
         help="Problem sizes in QxL format.",
     )

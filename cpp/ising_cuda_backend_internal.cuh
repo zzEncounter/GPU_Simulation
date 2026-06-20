@@ -121,6 +121,15 @@ void launch_inverse_walk_ry_step(Complex *current, Complex *lambda,
 void launch_inverse_walk_rz_step(Complex *current, Complex *lambda,
                                  std::size_t size, std::size_t wire,
                                  double theta, double *out_gradient);
+void launch_inverse_walk_ryrz_step(Complex *current, Complex *lambda,
+                                   std::size_t size, std::size_t wire,
+                                   double theta_ry, double theta_rz,
+                                   double *out_theta_gradient,
+                                   double *out_phi_gradient);
+void launch_inverse_walk_ryrz_rotation_chunk(
+    Complex *current, Complex *lambda, std::size_t size,
+    std::size_t chunk_start, std::size_t chunk_width,
+    const double *theta_ry, const double *theta_rz, double *out_gradients);
 void launch_inverse_walk_cnot_step(Complex *current, Complex *lambda,
                                    std::size_t size, std::size_t control,
                                    std::size_t target);

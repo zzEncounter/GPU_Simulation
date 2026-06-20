@@ -186,66 +186,6 @@ __global__ void apply_ryrz_rotation_chunk_register_kernel(
     }
 }
 
-__global__ void apply_ryrz_rotation_chunk_kernel(
-    Complex *state, std::size_t size, std::size_t chunk_start,
-    std::size_t chunk_width, RotationChunkCoeffs coeffs) {
-    __shared__ Complex tile[THREADS];
-
-    const auto tile_dim = std::size_t{1} << chunk_width;
-    const auto tiles_per_block = static_cast<std::size_t>(THREADS) / tile_dim;
-    const auto local_thread = static_cast<std::size_t>(threadIdx.x);
-    const auto local_tile = local_thread / tile_dim;
-    const auto local_index = local_thread & (tile_dim - 1);
-    const auto tile_id =
-        static_cast<std::size_t>(blockIdx.x) * tiles_per_block + local_tile;
-    const auto num_tiles = size / tile_dim;
-    const bool active = tile_id < num_tiles;
-
-    std::size_t state_index = 0;
-    if (active) {
-        const auto low_mask = (std::size_t{1} << chunk_start) - 1;
-        const auto base =
-            (tile_id & low_mask) | ((tile_id & ~low_mask) << chunk_width);
-        state_index = base | (local_index << chunk_start);
-        tile[local_thread] = state[state_index];
-    }
-    __syncthreads();
-
-    for (std::size_t local_wire = 0; local_wire < chunk_width; local_wire++) {
-        const auto bit = std::size_t{1} << local_wire;
-        if (active && (local_index & bit) == 0U) {
-            const auto partner_thread = local_thread | bit;
-            const double c = coeffs.c[local_wire];
-            const double s = coeffs.s[local_wire];
-            const double cos_half = coeffs.cos_half[local_wire];
-            const double sin_half = coeffs.sin_half[local_wire];
-
-            const Complex a0 = tile[local_thread];
-            const Complex a1 = tile[partner_thread];
-            const double a0_r = a0.real();
-            const double a0_i = a0.imag();
-            const double a1_r = a1.real();
-            const double a1_i = a1.imag();
-            const double b0_r = c * a0_r - s * a1_r;
-            const double b0_i = c * a0_i - s * a1_i;
-            const double b1_r = s * a0_r + c * a1_r;
-            const double b1_i = s * a0_i + c * a1_i;
-
-            tile[local_thread] =
-                Complex(cos_half * b0_r + sin_half * b0_i,
-                        cos_half * b0_i - sin_half * b0_r);
-            tile[partner_thread] =
-                Complex(cos_half * b1_r - sin_half * b1_i,
-                        cos_half * b1_i + sin_half * b1_r);
-        }
-        __syncthreads();
-    }
-
-    if (active) {
-        state[state_index] = tile[local_thread];
-    }
-}
-
 __device__ inline void fused_ryrz_local_coeff(
     bool out_bit, bool in_bit, double c, double s, double cos_half,
     double sin_half, double *real, double *imag) {
@@ -391,6 +331,10 @@ void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
         throw std::invalid_argument(
             "rotation chunk width exceeds supported maximum.");
     }
+    if (chunk_width == 1) {
+        throw std::invalid_argument(
+            "rotation chunk width 1 should use launch_apply_ryrz.");
+    }
     if (chunk_start + chunk_width >= sizeof(std::size_t) * 8 ||
         (std::size_t{1} << (chunk_start + chunk_width)) > size) {
         throw std::invalid_argument("rotation chunk exceeds state dimension.");
@@ -400,10 +344,6 @@ void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
     if (tile_dim > static_cast<std::size_t>(THREADS)) {
         throw std::invalid_argument("rotation chunk tile_dim exceeds THREADS.");
     }
-    const auto tiles_per_block = static_cast<std::size_t>(THREADS) / tile_dim;
-    const auto num_tiles = size / tile_dim;
-    const auto blocks =
-        static_cast<int>((num_tiles + tiles_per_block - 1) / tiles_per_block);
     const auto coeffs =
         make_rotation_chunk_coeffs(chunk_width, theta_ry, theta_rz);
 
@@ -437,9 +377,7 @@ void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
             state, size, chunk_start, coeffs);
         break;
     default:
-        apply_ryrz_rotation_chunk_kernel<<<blocks, THREADS>>>(
-            state, size, chunk_start, chunk_width, coeffs);
-        break;
+        throw std::invalid_argument("unsupported rotation chunk width.");
     }
     check_cuda(cudaGetLastError(), "apply_ryrz_rotation_chunk_kernel");
     maybe_synchronize_cuda("apply_ryrz_rotation_chunk_kernel sync");

@@ -159,7 +159,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 )
 
     def test_mode2_rotation_chunk_widths_match_reference(self) -> None:
-        num_qubits = 8
+        num_qubits = 10
         field = 0.9
         params = self._make_params(seed=2030, num_qubits=num_qubits)
         reference_energy, reference_grad = self._standalone_result(
