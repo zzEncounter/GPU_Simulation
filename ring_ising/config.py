@@ -34,4 +34,4 @@ class RunConfig:
     telemetry_interval_s: float = 0.5
     telemetry_live: bool = False
     gradient_strategy: str = "inverse_walk"
-    mode2_rotation_chunk_width: int = 1
+    mode2_rotation_chunk_width: int = 8

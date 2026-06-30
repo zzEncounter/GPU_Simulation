@@ -135,22 +135,61 @@ void apply_ring_cnot_layer_inplace(Complex *state, Complex *scratch,
 }
 
 void launch_mode2_backward_ryrz_wire(RingIsingCudaBackend::Impl &impl,
+                                     Complex *current, Complex *lambda,
                                      const double *params, std::size_t layer,
                                      std::size_t wire) {
     const auto base = mode2_param_base(impl, layer, wire);
     const double theta_ry = params != nullptr ? params[base] : 0.0;
     const double theta_rz = params != nullptr ? params[base + 1] : 0.0;
     detail::launch_inverse_walk_ryrz_step(
-        impl.current.get(), impl.lambda.get(), impl.state_size, wire, theta_ry,
+        current, lambda, impl.state_size, wire, theta_ry,
         theta_rz, impl.gate_level_gradients.get() + base,
         impl.gate_level_gradients.get() + base + 1);
 }
 
+void launch_mode2_backward_ryrz_chunk(RingIsingCudaBackend::Impl &impl,
+                                      Complex *current, Complex *lambda,
+                                      const double *params, std::size_t layer,
+                                      Mode2RotationChunk chunk) {
+    std::array<double, MODE2_ROTATION_CHUNK_WIRES> theta_ry{};
+    std::array<double, MODE2_ROTATION_CHUNK_WIRES> theta_rz{};
+    load_mode2_rotation_params(impl, params, layer, chunk, theta_ry, theta_rz);
+    const auto base = mode2_param_base(impl, layer, chunk.start);
+    detail::launch_inverse_walk_ryrz_rotation_chunk(
+        current, lambda, impl.state_size, chunk.start, chunk.width,
+        theta_ry.data(), theta_rz.data(),
+        impl.gate_level_gradients.get() + base);
+}
+
 void run_mode2_backward_rotation_layer(
-    RingIsingCudaBackend::Impl &impl, const double *params,
+    RingIsingCudaBackend::Impl &impl, Complex *current, Complex *lambda,
+    const double *params,
     std::size_t layer) {
-    for (std::size_t wire = impl.num_qubits; wire-- > 0;) {
-        launch_mode2_backward_ryrz_wire(impl, params, layer, wire);
+    auto requested_chunk_width =
+        std::min<std::size_t>(impl.mode2_rotation_chunk_width,
+                              MODE2_ROTATION_CHUNK_WIRES);
+    if (requested_chunk_width > 1 && impl.num_qubits <= 15) {
+        requested_chunk_width =
+            std::min<std::size_t>(requested_chunk_width, 4);
+    }
+    if (requested_chunk_width > 1 && requested_chunk_width < 8 &&
+        impl.num_qubits >= 16) {
+        requested_chunk_width = 1;
+    }
+
+    std::size_t wire = impl.num_qubits;
+    while (wire > 0) {
+        if (requested_chunk_width >= 2 && wire >= requested_chunk_width) {
+            const auto chunk_start = wire - requested_chunk_width;
+            Mode2RotationChunk chunk{chunk_start, requested_chunk_width};
+            launch_mode2_backward_ryrz_chunk(impl, current, lambda, params,
+                                             layer, chunk);
+            wire = chunk_start;
+            continue;
+        }
+        wire--;
+        launch_mode2_backward_ryrz_wire(impl, current, lambda, params, layer,
+                                        wire);
     }
 }
 
@@ -186,13 +225,29 @@ void run_inverse_walk_backward_sweep(RingIsingCudaBackend::Impl &impl,
 
 void run_mode2_backward_sweep(RingIsingCudaBackend::Impl &impl,
                               const double *params) {
-    for (std::size_t layer = impl.num_layers; layer-- > 0;) {
-        apply_ring_cnot_layer_inplace(impl.current.get(), impl.scratch.get(),
-                                      impl.state_size, impl.num_qubits, true);
-        apply_ring_cnot_layer_inplace(impl.lambda.get(), impl.scratch.get(),
-                                      impl.state_size, impl.num_qubits, true);
+    auto *current = impl.current.get();
+    auto *next_current = impl.scratch.get();
+    auto *lambda = impl.lambda.get();
+    auto *next_lambda = impl.cnot_scratch.get();
 
-        run_mode2_backward_rotation_layer(impl, params, layer);
+    for (std::size_t layer = impl.num_layers; layer-- > 0;) {
+        detail::launch_apply_ring_cnot_layer(next_current, current,
+                                             impl.state_size, impl.num_qubits,
+                                             true);
+        detail::launch_apply_ring_cnot_layer(next_lambda, lambda,
+                                             impl.state_size, impl.num_qubits,
+                                             true);
+        std::swap(current, next_current);
+        std::swap(lambda, next_lambda);
+
+        run_mode2_backward_rotation_layer(impl, current, lambda, params, layer);
+    }
+
+    if (current != impl.current.get()) {
+        copy_device_buffer(impl.current.get(), current, impl.state_size);
+    }
+    if (lambda != impl.lambda.get()) {
+        copy_device_buffer(impl.lambda.get(), lambda, impl.state_size);
     }
 }
 

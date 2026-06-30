@@ -167,18 +167,28 @@ __global__ void apply_ring_cnot_layer_kernel(Complex *out, const Complex *in,
         return;
     }
 
-    std::size_t transformed = index;
+    const auto mask = (std::size_t{1} << num_qubits) - 1;
+    std::size_t transformed = 0;
     if (!inverse) {
-        for (std::size_t wire = 0; wire < num_qubits; wire++) {
-            if (((transformed >> wire) & std::size_t{1}) != 0U) {
-                transformed ^= (std::size_t{1} << ((wire + 1) % num_qubits));
-            }
+        auto prefix = index;
+        prefix ^= prefix << 1U;
+        prefix ^= prefix << 2U;
+        prefix ^= prefix << 4U;
+        prefix ^= prefix << 8U;
+        prefix ^= prefix << 16U;
+        if constexpr (sizeof(std::size_t) > 4) {
+            prefix ^= prefix << 32U;
         }
+        prefix &= mask;
+        transformed = prefix & ~std::size_t{1};
+        transformed |=
+            static_cast<std::size_t>(__popcll(static_cast<unsigned long long>(
+                                         index >> 1U)) &
+                                     1U);
     } else {
-        for (std::size_t wire = num_qubits; wire-- > 0;) {
-            if (((transformed >> wire) & std::size_t{1}) != 0U) {
-                transformed ^= (std::size_t{1} << ((wire + 1) % num_qubits));
-            }
+        transformed = (index ^ (index << 1U)) & mask;
+        if (((index >> (num_qubits - 1U)) & std::size_t{1}) != 0U) {
+            transformed ^= std::size_t{3};
         }
     }
     out[transformed] = in[index];

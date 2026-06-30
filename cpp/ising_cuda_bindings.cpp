@@ -64,7 +64,7 @@ PYBIND11_MODULE(_cuda_backend, m) {
                       std::size_t>(),
              py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
              py::arg("gradient_strategy") = "save_param_states",
-             py::arg("mode2_rotation_chunk_width") = 1)
+             py::arg("mode2_rotation_chunk_width") = 8)
         .def(
             "energy_and_grad",
             [](standalone_backend::RingIsingCudaBackend &self,
@@ -110,6 +110,6 @@ PYBIND11_MODULE(_cuda_backend, m) {
         py::arg("params"),
         py::arg("compute_gradient") = true,
         py::arg("profile") = false,
-        py::arg("mode2_rotation_chunk_width") = 1);
+        py::arg("mode2_rotation_chunk_width") = 8);
 
 }

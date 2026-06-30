@@ -53,7 +53,7 @@
 
 - `save_all` 路径已经从对外接口移除。
 - `inverse_walk` 与 `save_param_states` 固定使用与 PennyLane 一致的 `RY -> RZ -> CNOT` 门级结构，不做 gate fusion。
-- `mode2` 使用与 `inverse_walk` 相同的 adjoint 思路，但 forward 阶段合并每个 wire 的 `RY+RZ`，并使用 fused ring-CNOT layer；backward 阶段也会 per-wire 合并 `RY+RZ` 的反推与两个参数梯度计算，并用 fused inverse ring-CNOT layer 分别更新 `current` / `lambda`。当低位 chunk 宽度达到 8 时，backward rotation 也会对这段低位连续 wires 做 chunk fusion；高位和较窄 chunk 仍走 per-wire backward，以避开大 stride 与同步开销。可通过 `mode2_rotation_chunk_width` / `--mode2-rotation-chunk-width` 调整 structured rotation-layer fusion 目标宽度；`1` 等价 per-wire fused，`2..8` 表示一次 kernel 顺序融合多个 qubit 的旋转。高位 chunk 会自动降到最多 4 wires，以避免大 stride 访问下的过重 cooperative chunk。
+- `mode2` 使用与 `inverse_walk` 相同的 adjoint 思路，但 forward 阶段合并每个 wire 的 `RY+RZ`，并使用 fused ring-CNOT layer；backward 阶段也会 per-wire 合并 `RY+RZ` 的反推与两个参数梯度计算，并用 fused inverse ring-CNOT layer 分别更新 `current` / `lambda`。默认 `mode2_rotation_chunk_width=8`；backward rotation 会按问题规模选择有效 chunk 宽度，12-15 qubit 降到 4，16 qubit 以上只在请求 8 时启用 chunk，以避开较窄高位 chunk 的大 stride 开销。可通过 `mode2_rotation_chunk_width` / `--mode2-rotation-chunk-width` 调整 structured rotation-layer fusion 目标宽度；`1` 等价 per-wire fused，`2..8` 表示一次 kernel 顺序融合多个 qubit 的旋转。
 - `dense_scan` 是保留的特殊实验路径，继续使用它自己的 fused dense gate 结构。
 - `debug/stage-profile` 分支在 baseline/实验模式上增加了细粒度阶段耗时分析能力，便于后续从基线重新派生新方案。
 

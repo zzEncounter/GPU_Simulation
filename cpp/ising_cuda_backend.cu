@@ -320,6 +320,7 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<Complex> current;
     DeviceBuffer<Complex> lambda;
     DeviceBuffer<Complex> scratch;
+    DeviceBuffer<Complex> cnot_scratch;
     DeviceBuffer<Complex> save_param_states;
     DeviceBuffer<double> gate_level_gradients;
     std::unique_ptr<CublasHandle> dense_cublas;
@@ -365,6 +366,9 @@ struct RingIsingCudaBackend::Impl {
             mode2_rotation_chunk_width > MODE2_ROTATION_CHUNK_WIRES) {
             throw std::invalid_argument(
                 "mode2_rotation_chunk_width exceeds supported maximum.");
+        }
+        if (strategy == GradientStrategy::Mode2) {
+            cnot_scratch.allocate(state_size);
         }
         if (strategy == GradientStrategy::SaveParamStates) {
             save_param_states.allocate(expected_params * state_size);

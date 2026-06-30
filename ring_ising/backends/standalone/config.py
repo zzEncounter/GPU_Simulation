@@ -20,7 +20,7 @@ class StandaloneBackendConfig:
     layers: int
     field: float
     gradient_strategy: str
-    mode2_rotation_chunk_width: int = 1
+    mode2_rotation_chunk_width: int = 8
 
     @property
     def param_shape(self) -> tuple[int, int, int]:
