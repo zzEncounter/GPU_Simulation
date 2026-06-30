@@ -9,10 +9,6 @@ namespace detail {
 
 constexpr std::size_t DENSE_SCAN_MAX_DIM = 64;
 constexpr std::size_t ROTATION_CHUNK_MAX_WIRES = 8;
-constexpr std::size_t DENSE_ROTATION_CHUNK_MAX_WIRES = 3;
-constexpr std::size_t ROTATION_CHUNK_REGISTER_TILE_START = 4;
-constexpr std::size_t ROTATION_CHUNK_REGISTER_TILE_MIN_TILES =
-    std::size_t{1} << 15;
 
 struct RotationChunkCoeffs {
     double c[ROTATION_CHUNK_MAX_WIRES]{};

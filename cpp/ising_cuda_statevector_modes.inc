@@ -1,49 +1,67 @@
-constexpr std::size_t MODE2_HIGH_STRIDE_CHUNK_START = 4;
-constexpr std::size_t MODE2_HIGH_STRIDE_MAX_CHUNK_WIDTH = 4;
-
 struct Mode2RotationChunk {
     std::size_t start;
     std::size_t width;
 };
 
-auto mode2_rotation_chunk_width_at(std::size_t chunk_start,
-                                   std::size_t remaining_qubits,
-                                   std::size_t target_chunk_width)
-    -> std::size_t {
-    auto chunk_width = target_chunk_width;
-    if (chunk_start >= MODE2_HIGH_STRIDE_CHUNK_START) {
-        chunk_width = std::min(chunk_width,
-                               MODE2_HIGH_STRIDE_MAX_CHUNK_WIDTH);
-    }
-    return std::min(chunk_width, remaining_qubits);
-}
+struct Mode2ForwardRotationChunk {
+    Mode2RotationChunk chunk;
+    detail::RotationChunkKernelPreference kernel_preference{
+        detail::RotationChunkKernelPreference::Cooperative};
+};
 
-auto build_mode2_rotation_chunks(std::size_t num_qubits,
-                                 std::size_t target_chunk_width)
-    -> std::vector<Mode2RotationChunk> {
-    if (target_chunk_width == 0) {
-        throw std::invalid_argument("target_chunk_width must be positive.");
-    }
-    if (target_chunk_width > MODE2_ROTATION_CHUNK_WIRES) {
-        throw std::invalid_argument(
-            "target_chunk_width exceeds supported maximum.");
-    }
+auto build_mode2_forward_rotation_chunks(
+    const RingIsingCudaBackend::Impl &impl)
+    -> std::vector<Mode2ForwardRotationChunk> {
+    std::vector<Mode2ForwardRotationChunk> chunks;
+    chunks.reserve((impl.num_qubits + 3) / 4);
 
-    std::vector<Mode2RotationChunk> chunks;
-    std::size_t chunk_start = 0;
-    while (chunk_start < num_qubits) {
-        const auto chunk_width = mode2_rotation_chunk_width_at(
-            chunk_start, num_qubits - chunk_start, target_chunk_width);
-        chunks.push_back({chunk_start, chunk_width});
-        chunk_start += chunk_width;
-    }
+    auto append_fixed_width =
+        [&](std::size_t chunk_start, std::size_t max_width,
+            detail::RotationChunkKernelPreference kernel_preference) {
+            while (chunk_start < impl.num_qubits) {
+                const auto chunk_width =
+                    std::min(max_width, impl.num_qubits - chunk_start);
+                chunks.push_back(
+                    {{chunk_start, chunk_width}, kernel_preference});
+                chunk_start += chunk_width;
+            }
+        };
+
+    auto append_w8_prefix_high4 =
+        [&](std::size_t prefix_end,
+            detail::RotationChunkKernelPreference prefix_kernel) {
+            std::size_t chunk_start = 0;
+            while (chunk_start < impl.num_qubits && chunk_start < prefix_end) {
+                const auto chunk_width =
+                    std::min<std::size_t>(8, impl.num_qubits - chunk_start);
+                chunks.push_back(
+                    {{chunk_start, chunk_width}, prefix_kernel});
+                chunk_start += chunk_width;
+            }
+            append_fixed_width(chunk_start, 4,
+                               detail::RotationChunkKernelPreference::Register);
+        };
+
+    auto append_default_start_aware_hybrid = [&]() {
+        if (impl.num_qubits <= 15) {
+            append_fixed_width(
+                0, 8, detail::RotationChunkKernelPreference::Cooperative);
+            return;
+        }
+
+        const auto suffix_width = impl.num_qubits - 8;
+        if (suffix_width <= 14) {
+            append_w8_prefix_high4(
+                16, detail::RotationChunkKernelPreference::CooperativePair512);
+            return;
+        }
+
+        append_fixed_width(0, 4,
+                           detail::RotationChunkKernelPreference::Register);
+    };
+
+    append_default_start_aware_hybrid();
     return chunks;
-}
-
-auto build_mode2_rotation_chunks(const RingIsingCudaBackend::Impl &impl)
-    -> std::vector<Mode2RotationChunk> {
-    return build_mode2_rotation_chunks(impl.num_qubits,
-                                       impl.mode2_rotation_chunk_width);
 }
 
 auto mode2_param_base(const RingIsingCudaBackend::Impl &impl,
@@ -67,7 +85,8 @@ void load_mode2_rotation_params(
 void launch_mode2_forward_rotation_chunk(
     Complex *state, std::size_t state_size, Mode2RotationChunk chunk,
     const std::array<double, MODE2_ROTATION_CHUNK_WIRES> &theta_ry,
-    const std::array<double, MODE2_ROTATION_CHUNK_WIRES> &theta_rz) {
+    const std::array<double, MODE2_ROTATION_CHUNK_WIRES> &theta_rz,
+    detail::RotationChunkKernelPreference kernel_preference) {
     if (chunk.width == 1) {
         detail::launch_apply_ryrz(state, state_size, chunk.start, theta_ry[0],
                                   theta_rz[0]);
@@ -75,23 +94,26 @@ void launch_mode2_forward_rotation_chunk(
     }
     detail::launch_apply_ryrz_rotation_chunk(
         state, state_size, chunk.start, chunk.width, theta_ry.data(),
-        theta_rz.data());
+        theta_rz.data(), kernel_preference);
 }
 
 void apply_mode2_forward_layers(
     RingIsingCudaBackend::Impl &impl, const double *params,
-    const std::vector<Mode2RotationChunk> &rotation_chunks) {
+    const std::vector<Mode2ForwardRotationChunk> &rotation_chunks) {
     auto *state = impl.current.get();
     auto *next = impl.scratch.get();
 
     for (std::size_t layer = 0; layer < impl.num_layers; layer++) {
-        for (const auto chunk : rotation_chunks) {
+        for (const auto forward_chunk : rotation_chunks) {
+            const auto chunk = forward_chunk.chunk;
             std::array<double, MODE2_ROTATION_CHUNK_WIRES> theta_ry{};
             std::array<double, MODE2_ROTATION_CHUNK_WIRES> theta_rz{};
             load_mode2_rotation_params(impl, params, layer, chunk, theta_ry,
                                        theta_rz);
             launch_mode2_forward_rotation_chunk(state, impl.state_size, chunk,
-                                                theta_ry, theta_rz);
+                                                theta_ry, theta_rz,
+                                                forward_chunk
+                                                    .kernel_preference);
         }
 
         detail::launch_apply_ring_cnot_layer(next, state, impl.state_size,
@@ -124,33 +146,11 @@ void launch_mode2_backward_ryrz_wire(RingIsingCudaBackend::Impl &impl,
         impl.gate_level_gradients.get() + base + 1);
 }
 
-auto mode2_should_use_backward_rotation_chunk(const Mode2RotationChunk &chunk)
-    -> bool {
-    return chunk.start < MODE2_HIGH_STRIDE_CHUNK_START && chunk.width >= 8;
-}
-
 void run_mode2_backward_rotation_layer(
-    RingIsingCudaBackend::Impl &impl, const double *params, std::size_t layer,
-    const std::vector<Mode2RotationChunk> &rotation_chunks) {
-    for (std::size_t chunk_index = rotation_chunks.size(); chunk_index-- > 0;) {
-        const auto chunk = rotation_chunks[chunk_index];
-        if (!mode2_should_use_backward_rotation_chunk(chunk)) {
-            for (std::size_t local = chunk.width; local-- > 0;) {
-                launch_mode2_backward_ryrz_wire(impl, params, layer,
-                                                chunk.start + local);
-            }
-            continue;
-        }
-
-        std::array<double, MODE2_ROTATION_CHUNK_WIRES> theta_ry{};
-        std::array<double, MODE2_ROTATION_CHUNK_WIRES> theta_rz{};
-        load_mode2_rotation_params(impl, params, layer, chunk, theta_ry,
-                                   theta_rz);
-        const auto gradient_base = mode2_param_base(impl, layer, chunk.start);
-        detail::launch_inverse_walk_ryrz_rotation_chunk(
-            impl.current.get(), impl.lambda.get(), impl.state_size,
-            chunk.start, chunk.width, theta_ry.data(), theta_rz.data(),
-            impl.gate_level_gradients.get() + gradient_base);
+    RingIsingCudaBackend::Impl &impl, const double *params,
+    std::size_t layer) {
+    for (std::size_t wire = impl.num_qubits; wire-- > 0;) {
+        launch_mode2_backward_ryrz_wire(impl, params, layer, wire);
     }
 }
 
@@ -185,17 +185,14 @@ void run_inverse_walk_backward_sweep(RingIsingCudaBackend::Impl &impl,
 }
 
 void run_mode2_backward_sweep(RingIsingCudaBackend::Impl &impl,
-                              const double *params,
-                              const std::vector<Mode2RotationChunk>
-                                  &rotation_chunks) {
+                              const double *params) {
     for (std::size_t layer = impl.num_layers; layer-- > 0;) {
         apply_ring_cnot_layer_inplace(impl.current.get(), impl.scratch.get(),
                                       impl.state_size, impl.num_qubits, true);
         apply_ring_cnot_layer_inplace(impl.lambda.get(), impl.scratch.get(),
                                       impl.state_size, impl.num_qubits, true);
 
-        run_mode2_backward_rotation_layer(impl, params, layer,
-                                          rotation_chunks);
+        run_mode2_backward_rotation_layer(impl, params, layer);
     }
 }
 
@@ -205,10 +202,11 @@ auto run_energy_only(RingIsingCudaBackend::Impl &impl, const double *params,
     validate_num_params(impl.expected_params, num_params);
     StageProfiler profiler(profile);
     std::vector<OpDesc> ops;
-    std::vector<Mode2RotationChunk> mode2_rotation_chunks;
+    std::vector<Mode2ForwardRotationChunk> mode2_forward_rotation_chunks;
     cpu_stage(profiler, "build_ops_host_ms", [&]() {
         if (is_mode2_family(impl.strategy)) {
-            mode2_rotation_chunks = build_mode2_rotation_chunks(impl);
+            mode2_forward_rotation_chunks =
+                build_mode2_forward_rotation_chunks(impl);
             return;
         }
         ops = build_ops_for_strategy(impl.num_qubits, impl.num_layers, params,
@@ -220,7 +218,8 @@ auto run_energy_only(RingIsingCudaBackend::Impl &impl, const double *params,
     });
     gpu_stage(profiler, "forward_apply_ms", [&]() {
         if (is_mode2_family(impl.strategy)) {
-            apply_mode2_forward_layers(impl, params, mode2_rotation_chunks);
+            apply_mode2_forward_layers(impl, params,
+                                       mode2_forward_rotation_chunks);
             return;
         }
         for (const auto &op : ops) {
@@ -318,17 +317,18 @@ auto run_energy_and_grad_mode2(RingIsingCudaBackend::Impl &impl,
                                bool profile) -> EnergyGradResult {
     validate_num_params(impl.expected_params, num_params);
     StageProfiler profiler(profile);
-    const auto rotation_chunks = cpu_stage(
+    std::vector<Mode2ForwardRotationChunk> forward_rotation_chunks;
+    cpu_stage(
         profiler, "build_ops_host_ms",
         [&]() {
-            return build_mode2_rotation_chunks(impl);
+            forward_rotation_chunks = build_mode2_forward_rotation_chunks(impl);
         });
 
     gpu_stage(profiler, "zero_state_ms", [&]() {
         detail::launch_init_zero_state(impl.current.get(), impl.state_size);
     });
     gpu_stage(profiler, "forward_apply_ms", [&]() {
-        apply_mode2_forward_layers(impl, params, rotation_chunks);
+        apply_mode2_forward_layers(impl, params, forward_rotation_chunks);
     });
     gpu_stage(profiler, "hamiltonian_ms", [&]() {
         detail::launch_apply_hamiltonian(impl.lambda.get(), impl.current.get(),
@@ -357,7 +357,7 @@ auto run_energy_and_grad_mode2(RingIsingCudaBackend::Impl &impl,
             "zero mode2 gradients");
     });
     gpu_stage(profiler, "backward_sweep_ms", [&]() {
-        run_mode2_backward_sweep(impl, params, rotation_chunks);
+        run_mode2_backward_sweep(impl, params);
     });
 
     result.gradient.assign(impl.expected_params, 0.0);

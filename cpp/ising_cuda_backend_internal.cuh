@@ -31,6 +31,12 @@ using Complex = thrust::complex<double>;
 
 constexpr int THREADS = 256;
 
+enum class RotationChunkKernelPreference : int {
+    Cooperative,
+    CooperativePair512,
+    Register
+};
+
 void check_cuda(cudaError_t status, const char *context);
 void check_cublas(cublasStatus_t status, const char *context);
 void maybe_synchronize_cuda(const char *context);
@@ -109,12 +115,9 @@ void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
                                       std::size_t chunk_start,
                                       std::size_t chunk_width,
                                       const double *theta_ry,
-                                      const double *theta_rz);
-void launch_apply_ryrz_rotation_dense_chunk(Complex *state, std::size_t size,
-                                            std::size_t chunk_start,
-                                            std::size_t chunk_width,
-                                            const double *theta_ry,
-                                            const double *theta_rz);
+                                      const double *theta_rz,
+                                      RotationChunkKernelPreference
+                                          kernel_preference);
 void launch_inverse_walk_ry_step(Complex *current, Complex *lambda,
                                  std::size_t size, std::size_t wire,
                                  double theta, double *out_gradient);
