@@ -253,13 +253,13 @@ __global__ void apply_ring_ising_hamiltonian_kernel(Complex *out,
         return;
     }
 
-    double diag_coeff = 0.0;
-    for (std::size_t wire = 0; wire < num_qubits; wire++) {
-        const auto next_wire = (wire + 1) % num_qubits;
-        const double zi = bit_is_set(index, wire) ? -1.0 : 1.0;
-        const double zj = bit_is_set(index, next_wire) ? -1.0 : 1.0;
-        diag_coeff += -(zi * zj);
-    }
+    const auto mask = (std::size_t{1} << num_qubits) - 1;
+    const auto rotated =
+        ((index << 1U) & mask) | (index >> (num_qubits - 1U));
+    const auto domain_walls =
+        __popcll(static_cast<unsigned long long>((index ^ rotated) & mask));
+    const double diag_coeff =
+        static_cast<double>(2 * domain_walls) - static_cast<double>(num_qubits);
 
     Complex value = Complex(diag_coeff, 0.0) * state[index];
     for (std::size_t wire = 0; wire < num_qubits; wire++) {
