@@ -53,11 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument(
+        "--structured-widths",
         "--mode2-widths",
+        dest="structured_widths",
         nargs="+",
         type=int,
         default=[1, 2, 3, 4, 8],
-        help="mode2 structured rotation chunk widths to benchmark.",
+        help="structured_adjoint rotation chunk widths to benchmark.",
     )
     parser.add_argument("--csv-out", type=Path, default=None)
     return parser.parse_args()
@@ -68,7 +70,7 @@ def make_backend(
     *,
     mode: str,
     field: float,
-    mode2_width: int = 1,
+    structured_width: int = 1,
 ) -> RingIsingAdjointBackend:
     return RingIsingAdjointBackend(
         StandaloneBackendConfig(
@@ -76,7 +78,7 @@ def make_backend(
             layers=case.layers,
             field=field,
             gradient_strategy=mode,
-            mode2_rotation_chunk_width=mode2_width,
+            structured_rotation_chunk_width=structured_width,
         )
     )
 
@@ -128,12 +130,13 @@ def main() -> None:
         print(f"{case.num_qubits} qubits x {case.layers} layers")
         mode_specs = [("inverse_walk", "inverse_walk", 1)]
         mode_specs.extend(
-            (f"mode2_w{width}", "mode2", width)
-            for width in args.mode2_widths
+            (f"structured_w{width}", "structured_adjoint", width)
+            for width in args.structured_widths
         )
-        for label, mode, mode2_width in mode_specs:
+        for label, mode, structured_width in mode_specs:
             backend = make_backend(
-                case, mode=mode, field=args.field, mode2_width=mode2_width
+                case, mode=mode, field=args.field,
+                structured_width=structured_width
             )
             total_median_ms, stages = stage_profile_summary(
                 backend,
@@ -150,7 +153,7 @@ def main() -> None:
                         "layers": case.layers,
                         "mode": label,
                         "gradient_strategy": mode,
-                        "mode2_rotation_chunk_width": mode2_width,
+                        "structured_rotation_chunk_width": structured_width,
                         "stage": name,
                         "median_ms": value_ms,
                         "total_stage_ms": total_median_ms,
@@ -168,7 +171,7 @@ def main() -> None:
                     "layers",
                     "mode",
                     "gradient_strategy",
-                    "mode2_rotation_chunk_width",
+                    "structured_rotation_chunk_width",
                     "stage",
                     "median_ms",
                     "total_stage_ms",

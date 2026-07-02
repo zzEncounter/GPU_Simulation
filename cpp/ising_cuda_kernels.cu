@@ -157,18 +157,9 @@ __global__ void apply_cnot_kernel(Complex *state, std::size_t size,
     state[partner] = tmp;
 }
 
-__global__ void apply_ring_cnot_layer_kernel(Complex *out, const Complex *in,
-                                             std::size_t size,
-                                             std::size_t num_qubits,
-                                             bool inverse) {
-    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
-                                                threadIdx.x);
-    if (index >= size) {
-        return;
-    }
-
+__device__ __forceinline__ auto ring_cnot_layer_transformed_index(
+    std::size_t index, std::size_t num_qubits, bool inverse) -> std::size_t {
     const auto mask = (std::size_t{1} << num_qubits) - 1;
-    std::size_t transformed = 0;
     if (!inverse) {
         auto prefix = index;
         prefix ^= prefix << 1U;
@@ -180,17 +171,33 @@ __global__ void apply_ring_cnot_layer_kernel(Complex *out, const Complex *in,
             prefix ^= prefix << 32U;
         }
         prefix &= mask;
-        transformed = prefix & ~std::size_t{1};
+        auto transformed = prefix & ~std::size_t{1};
         transformed |=
             static_cast<std::size_t>(__popcll(static_cast<unsigned long long>(
                                          index >> 1U)) &
                                      1U);
-    } else {
-        transformed = (index ^ (index << 1U)) & mask;
-        if (((index >> (num_qubits - 1U)) & std::size_t{1}) != 0U) {
-            transformed ^= std::size_t{3};
-        }
+        return transformed;
     }
+
+    auto transformed = (index ^ (index << 1U)) & mask;
+    if (((index >> (num_qubits - 1U)) & std::size_t{1}) != 0U) {
+        transformed ^= std::size_t{3};
+    }
+    return transformed;
+}
+
+__global__ void apply_ring_cnot_layer_kernel(Complex *out, const Complex *in,
+                                             std::size_t size,
+                                             std::size_t num_qubits,
+                                             bool inverse) {
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= size) {
+        return;
+    }
+
+    const auto transformed =
+        ring_cnot_layer_transformed_index(index, num_qubits, inverse);
     out[transformed] = in[index];
 }
 

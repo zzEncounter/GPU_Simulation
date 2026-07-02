@@ -24,7 +24,7 @@ from ring_ising.params import make_initial_params_array
 
 MODES = (
     "inverse_walk",
-    "mode2",
+    "structured_adjoint",
 )
 NCU_METRICS = ("gpu__time_duration.sum",)
 
@@ -83,11 +83,13 @@ def parse_args() -> argparse.Namespace:
         help="Baseline modes to profile.",
     )
     parser.add_argument(
+        "--structured-widths",
         "--mode2-widths",
+        dest="structured_widths",
         nargs="+",
         type=int,
         default=[1, 2, 3, 4, 8],
-        help="mode2 structured rotation chunk widths to profile.",
+        help="structured_adjoint rotation chunk widths to profile.",
     )
     parser.add_argument("--field", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=7)
@@ -135,7 +137,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--internal-num-qubits", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-layers", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-mode", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--internal-mode2-width", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument("--internal-structured-width", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--internal-mode2-width",
+        dest="internal_structured_width",
+        type=int,
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -286,7 +294,7 @@ def make_backend(
     *,
     mode: str,
     field: float,
-    mode2_width: int = 1,
+    structured_width: int = 1,
 ) -> RingIsingAdjointBackend:
     return RingIsingAdjointBackend(
         StandaloneBackendConfig(
@@ -294,7 +302,7 @@ def make_backend(
             layers=case.layers,
             field=field,
             gradient_strategy=mode,
-            mode2_rotation_chunk_width=mode2_width,
+            structured_rotation_chunk_width=structured_width,
         )
     )
 
@@ -317,7 +325,7 @@ def run_internal_profile_case(args: argparse.Namespace) -> None:
         case,
         mode=args.internal_mode,
         field=args.field,
-        mode2_width=args.internal_mode2_width,
+        structured_width=args.internal_structured_width,
     )
     params = make_initial_params_array(
         num_qubits=case.num_qubits,
@@ -549,7 +557,7 @@ def run_ncu_profile_case(
     case: BenchmarkCase,
     mode: str,
     label: str,
-    mode2_width: int,
+    structured_width: int,
     profile_index: int,
 ) -> list[dict[str, Any]]:
     ncu_path = ensure_ncu_available(args.ncu_path)
@@ -578,8 +586,8 @@ def run_ncu_profile_case(
         str(case.layers),
         "--internal-mode",
         mode,
-        "--internal-mode2-width",
-        str(mode2_width),
+        "--internal-structured-width",
+        str(structured_width),
         "--field",
         str(args.field),
         "--seed",
@@ -634,11 +642,16 @@ def run_ncu_profile_case(
     )
 
 
-def mode_specs(modes: list[str], mode2_widths: list[int]) -> list[tuple[str, str, int]]:
+def mode_specs(
+    modes: list[str], structured_widths: list[int]
+) -> list[tuple[str, str, int]]:
     specs: list[tuple[str, str, int]] = []
     for mode in modes:
-        if mode == "mode2":
-            specs.extend((f"mode2_w{width}", "mode2", width) for width in mode2_widths)
+        if mode in {"structured_adjoint", "mode2"}:
+            specs.extend(
+                (f"structured_w{width}", "structured_adjoint", width)
+                for width in structured_widths
+            )
         else:
             specs.append((mode, mode, 1))
     return specs
@@ -653,7 +666,7 @@ def main() -> None:
     ensure_ncu_available(args.ncu_path)
 
     launch_rows: list[dict[str, Any]] = []
-    specs = mode_specs(list(args.modes), list(args.mode2_widths))
+    specs = mode_specs(list(args.modes), list(args.structured_widths))
     total_profiles = len(args.cases) * len(specs) * max(0, args.profile_count)
     current_profile = 0
 
@@ -667,7 +680,7 @@ def main() -> None:
     print()
 
     for case in args.cases:
-        for label, mode, mode2_width in specs:
+        for label, mode, structured_width in specs:
             for profile_index in range(max(0, args.profile_count)):
                 current_profile += 1
                 run_id = f"q{case.num_qubits}_l{case.layers}_{label}"
@@ -681,7 +694,7 @@ def main() -> None:
                         case=case,
                         mode=mode,
                         label=label,
-                        mode2_width=mode2_width,
+                        structured_width=structured_width,
                         profile_index=profile_index,
                     )
                 )

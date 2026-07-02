@@ -39,7 +39,9 @@ def _to_backend_config(config: RunConfig) -> StandaloneBackendConfig:
         layers=config.layers,
         field=config.field,
         gradient_strategy=config.gradient_strategy,
-        mode2_rotation_chunk_width=config.mode2_rotation_chunk_width,
+        structured_rotation_chunk_width=(
+            config.effective_structured_rotation_chunk_width
+        ),
     )
 
 
@@ -57,10 +59,10 @@ def print_standalone_runtime_summary(workflow: StandaloneWorkflow, params: np.nd
     print("Runtime:")
     print("  Backend: Standalone CUDA")
     print(f"  Gradient strategy: {workflow.backend.gradient_strategy}")
-    if workflow.backend.gradient_strategy == "mode2":
+    if workflow.backend.gradient_strategy == "structured_adjoint":
         print(
-            "  Mode2 rotation chunk width: "
-            f"{workflow.backend_config.mode2_rotation_chunk_width}"
+            "  Structured rotation chunk width: "
+            f"{workflow.backend_config.effective_structured_rotation_chunk_width}"
         )
     if workflow.backend.uses_pennylane_gate_structure:
         print("  PennyLane-style gate structure: True")
@@ -138,7 +140,9 @@ def run_standalone(config: RunConfig) -> TrainingRunResult:
             wall_s=total_wall_s,
             metadata={
                 "gradient_strategy": workflow.backend.gradient_strategy,
-                "mode2_rotation_chunk_width": workflow.backend_config.mode2_rotation_chunk_width,
+                "structured_rotation_chunk_width": (
+                    workflow.backend_config.effective_structured_rotation_chunk_width
+                ),
                 "estimated_workspace_gib": workflow.backend.estimated_workspace_gib,
                 "pennylane_gate_structure": workflow.backend.uses_pennylane_gate_structure,
             },

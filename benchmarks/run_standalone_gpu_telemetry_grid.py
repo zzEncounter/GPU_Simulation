@@ -33,8 +33,8 @@ from ring_ising.runtime._nvidia_smi import (
 
 MODES = (
     "inverse_walk",
-    "mode2",
-    "save_param_states",
+    "ryrz_fused",
+    "structured_adjoint",
     "dense_scan",
 )
 QUBITS = (4, 5, 6)
@@ -167,11 +167,13 @@ def parse_args() -> argparse.Namespace:
         help="Gradient strategies to benchmark.",
     )
     parser.add_argument(
+        "--structured-widths",
         "--mode2-widths",
+        dest="structured_widths",
         nargs="+",
         type=int,
         default=[1, 2, 3, 4, 8],
-        help="mode2 structured rotation chunk widths to benchmark.",
+        help="structured_adjoint rotation chunk widths to benchmark.",
     )
     parser.add_argument("--field", type=float, default=1.0)
     parser.add_argument("--stepsize", type=float, default=0.08)
@@ -275,7 +277,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--internal-layers", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-steps", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--internal-mode", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--internal-mode2-width", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument("--internal-structured-width", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--internal-mode2-width",
+        dest="internal_structured_width",
+        type=int,
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -654,7 +662,7 @@ def run_internal_ncu_profile_case(args: argparse.Namespace) -> None:
         telemetry_interval_s=args.telemetry_interval,
         telemetry_live=False,
         gradient_strategy=args.internal_mode,
-        mode2_rotation_chunk_width=args.internal_mode2_width,
+        structured_rotation_chunk_width=args.internal_structured_width,
     )
     result = run_standalone(config)
     print(f"ncu_profile_final_energy={result.final_energy}", file=sys.stderr)
@@ -719,7 +727,7 @@ def run_ncu_profile_case(
     run_id: str,
     mode: str,
     mode_label: str,
-    mode2_width: int,
+    structured_width: int,
     case: BenchmarkCase,
     steps: int,
     profile_index: int,
@@ -749,8 +757,8 @@ def run_ncu_profile_case(
         str(steps),
         "--internal-mode",
         mode,
-        "--internal-mode2-width",
-        str(mode2_width),
+        "--internal-structured-width",
+        str(structured_width),
         "--field",
         str(args.field),
         "--stepsize",
@@ -1045,11 +1053,16 @@ def base_gpu_row(
     }
 
 
-def mode_specs(modes: list[str], mode2_widths: list[int]) -> list[tuple[str, str, int]]:
+def mode_specs(
+    modes: list[str], structured_widths: list[int]
+) -> list[tuple[str, str, int]]:
     specs: list[tuple[str, str, int]] = []
     for mode in modes:
-        if mode == "mode2":
-            specs.extend((f"mode2_w{width}", "mode2", width) for width in mode2_widths)
+        if mode in {"structured_adjoint", "mode2"}:
+            specs.extend(
+                (f"structured_w{width}", "structured_adjoint", width)
+                for width in structured_widths
+            )
         else:
             specs.append((mode, mode, 1))
     return specs
@@ -1082,7 +1095,7 @@ def main() -> None:
         run_internal_ncu_profile_case(args)
         return
 
-    specs = mode_specs(list(args.modes), list(args.mode2_widths))
+    specs = mode_specs(list(args.modes), list(args.structured_widths))
     labels = [label for label, _, _ in specs]
     invalid_dense_cases = [
         case
@@ -1132,7 +1145,7 @@ def main() -> None:
     run_index = 0
     for case in cases:
         steps = default_steps_for(case)
-        for mode_label, mode, mode2_width in specs:
+        for mode_label, mode, structured_width in specs:
             run_index += 1
             run_id = f"q{case.num_qubits}_l{case.layers}_{mode_label}"
             print(f"[{run_index}/{total_runs}] {run_id}, steps={steps}")
@@ -1174,7 +1187,7 @@ def main() -> None:
                         telemetry_interval_s=args.telemetry_interval,
                         telemetry_live=False,
                         gradient_strategy=mode,
-                        mode2_rotation_chunk_width=mode2_width,
+                        structured_rotation_chunk_width=structured_width,
                     )
                     results.append(run_standalone(config))
 
@@ -1205,7 +1218,7 @@ def main() -> None:
                     "run_id": run_id,
                     "mode": mode_label,
                     "gradient_strategy": mode,
-                    "mode2_rotation_chunk_width": mode2_width,
+                    "structured_rotation_chunk_width": structured_width,
                     "num_qubits": case.num_qubits,
                     "layers": case.layers,
                     "steps": steps,
@@ -1244,7 +1257,7 @@ def main() -> None:
                             run_id=run_id,
                             mode=mode,
                             mode_label=mode_label,
-                            mode2_width=mode2_width,
+                            structured_width=structured_width,
                             case=case,
                             steps=steps,
                             profile_index=profile_index,
@@ -1257,7 +1270,7 @@ def main() -> None:
                             "run_id": run_id,
                             "mode": mode_label,
                             "gradient_strategy": mode,
-                            "mode2_rotation_chunk_width": mode2_width,
+                            "structured_rotation_chunk_width": structured_width,
                             "num_qubits": case.num_qubits,
                             "layers": case.layers,
                             "repeat": repeat_index,

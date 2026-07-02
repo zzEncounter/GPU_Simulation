@@ -40,7 +40,7 @@ class TrainingWorkflowInterfaceTest(unittest.TestCase):
                 steps=1,
                 report_steps=True,
                 show_progress=False,
-                gradient_strategy="save_param_states",
+                gradient_strategy="structured_adjoint",
                 seed=123,
                 verbose=False,
             )
@@ -77,7 +77,7 @@ class TrainingWorkflowInterfaceTest(unittest.TestCase):
                 report_steps=True,
                 show_progress=False,
                 seed=123,
-                gradient_strategy="save_param_states",
+                gradient_strategy="structured_adjoint",
                 verbose=False,
             )
         )

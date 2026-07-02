@@ -274,7 +274,7 @@ __global__ void apply_ryrz_rotation_chunk_register_kernel(
     }
 }
 
-auto mode2_state_qubits(std::size_t size) -> std::size_t {
+auto structured_state_qubits(std::size_t size) -> std::size_t {
     std::size_t qubits = 0;
     while ((std::size_t{1} << qubits) < size) {
         qubits++;
@@ -282,9 +282,9 @@ auto mode2_state_qubits(std::size_t size) -> std::size_t {
     return qubits;
 }
 
-auto mode2_register_threads_per_block(std::size_t size, int chunk_width)
+auto structured_register_threads_per_block(std::size_t size, int chunk_width)
     -> int {
-    const auto num_qubits = mode2_state_qubits(size);
+    const auto num_qubits = structured_state_qubits(size);
     if (chunk_width == 2 && (num_qubits == 21 || num_qubits == 22)) {
         return 32;
     }
@@ -307,7 +307,7 @@ void launch_apply_ryrz_rotation_chunk_specialized(
     if constexpr (W <= 4) {
         if (kernel_preference == RotationChunkKernelPreference::Register) {
             const auto register_threads =
-                mode2_register_threads_per_block(size, W);
+                structured_register_threads_per_block(size, W);
             const auto blocks =
                 static_cast<int>((num_tiles + register_threads - 1) /
                                  register_threads);

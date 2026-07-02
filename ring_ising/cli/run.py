@@ -11,9 +11,10 @@ from ring_ising.cli.common import (
 )
 from ring_ising.config import (
     BACKENDS,
-    MODE2_ROTATION_CHUNK_WIDTH_MAX,
     RunConfig,
+    STRUCTURED_ROTATION_CHUNK_WIDTH_MAX,
     STANDALONE_GRADIENT_STRATEGIES,
+    SUPPORTED_STANDALONE_GRADIENT_STRATEGIES,
 )
 from ring_ising.workflows import run
 
@@ -50,19 +51,29 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--gradient-strategy",
-        choices=STANDALONE_GRADIENT_STRATEGIES,
+        choices=SUPPORTED_STANDALONE_GRADIENT_STRATEGIES,
         default=DEFAULT_RUN_CONFIG.gradient_strategy,
-        help="Adjoint gradient baseline strategy. Only used with --backend standalone.",
+        help=(
+            "Standalone adjoint strategy. Public strategies: "
+            f"{', '.join(STANDALONE_GRADIENT_STRATEGIES)}."
+        ),
+    )
+    parser.add_argument(
+        "--structured-rotation-chunk-width",
+        type=int,
+        choices=range(1, STRUCTURED_ROTATION_CHUNK_WIDTH_MAX + 1),
+        default=DEFAULT_RUN_CONFIG.structured_rotation_chunk_width,
+        metavar=f"1..{STRUCTURED_ROTATION_CHUNK_WIDTH_MAX}",
+        help=(
+            "Rotation-layer fusion width for --gradient-strategy structured_adjoint."
+        ),
     )
     parser.add_argument(
         "--mode2-rotation-chunk-width",
+        dest="structured_rotation_chunk_width",
         type=int,
-        choices=range(1, MODE2_ROTATION_CHUNK_WIDTH_MAX + 1),
-        default=DEFAULT_RUN_CONFIG.mode2_rotation_chunk_width,
-        metavar=f"1..{MODE2_ROTATION_CHUNK_WIDTH_MAX}",
-        help=(
-            "Structured rotation-layer fusion width for --gradient-strategy mode2."
-        ),
+        choices=range(1, STRUCTURED_ROTATION_CHUNK_WIDTH_MAX + 1),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--report-steps",

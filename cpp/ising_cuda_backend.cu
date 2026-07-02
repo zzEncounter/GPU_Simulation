@@ -107,15 +107,15 @@ auto gpu_stage(StageProfiler &profiler, const char *name, Func &&func)
 
 enum class GradientStrategy {
     InverseWalk,
-    Mode2,
-    SaveParamStates,
+    RyrzFused,
+    StructuredAdjoint,
     DenseScan
 };
 
-constexpr std::size_t MODE2_ROTATION_CHUNK_WIRES = 8;
+constexpr std::size_t STRUCTURED_ROTATION_CHUNK_WIRES = 8;
 
-auto is_mode2_family(GradientStrategy strategy) -> bool {
-    return strategy == GradientStrategy::Mode2;
+auto is_structured_adjoint_family(GradientStrategy strategy) -> bool {
+    return strategy == GradientStrategy::StructuredAdjoint;
 }
 
 auto build_ring_ops(std::size_t num_qubits, std::size_t num_layers,
@@ -175,6 +175,9 @@ auto build_pennylane_gate_level_ops(std::size_t num_qubits,
 auto build_ops_for_strategy(std::size_t num_qubits, std::size_t num_layers,
                             const double *params, GradientStrategy strategy)
     -> std::vector<OpDesc> {
+    if (strategy == GradientStrategy::RyrzFused) {
+        return build_ring_ops(num_qubits, num_layers, params, false);
+    }
     if (strategy == GradientStrategy::DenseScan) {
         return build_ring_ops(num_qubits, num_layers, params, true);
     }
@@ -238,28 +241,24 @@ void validate_num_params(std::size_t expected_params, std::size_t num_params) {
     }
 }
 
-auto state_slot(Complex *base, std::size_t state_size, std::size_t index)
-    -> Complex * {
-    return base + index * state_size;
-}
-
 auto parse_gradient_strategy(const std::string &strategy)
     -> GradientStrategy {
-    if (strategy == "save_param_states") {
-        return GradientStrategy::SaveParamStates;
-    }
     if (strategy == "inverse_walk") {
         return GradientStrategy::InverseWalk;
     }
-    if (strategy == "mode2") {
-        return GradientStrategy::Mode2;
+    if (strategy == "ryrz_fused") {
+        return GradientStrategy::RyrzFused;
+    }
+    if (strategy == "structured_adjoint" || strategy == "mode2") {
+        return GradientStrategy::StructuredAdjoint;
     }
     if (strategy == "dense_scan") {
         return GradientStrategy::DenseScan;
     }
     throw std::invalid_argument(
         "Unknown gradient strategy. Expected one of: inverse_walk, "
-        "mode2, save_param_states, dense_scan.");
+        "structured_adjoint, dense_scan. Experimental aliases: ryrz_fused, "
+        "mode2.");
 }
 
 struct CublasHandle {
@@ -316,12 +315,11 @@ struct RingIsingCudaBackend::Impl {
     std::size_t state_size;
     std::size_t num_ops;
     GradientStrategy strategy;
-    std::size_t mode2_rotation_chunk_width;
+    std::size_t structured_rotation_chunk_width;
     DeviceBuffer<Complex> current;
     DeviceBuffer<Complex> lambda;
     DeviceBuffer<Complex> scratch;
     DeviceBuffer<Complex> cnot_scratch;
-    DeviceBuffer<Complex> save_param_states;
     DeviceBuffer<double> gate_level_gradients;
     std::unique_ptr<CublasHandle> dense_cublas;
     DeviceBuffer<Complex> dense_gate_mats;
@@ -347,31 +345,28 @@ struct RingIsingCudaBackend::Impl {
 
     Impl(std::size_t num_qubits_, std::size_t num_layers_, double field_,
          const std::string &gradient_strategy_,
-         std::size_t mode2_rotation_chunk_width_)
+         std::size_t structured_rotation_chunk_width_)
         : num_qubits(num_qubits_), num_layers(num_layers_), field(field_),
           expected_params(num_qubits_ * num_layers_ * 2),
           state_size(validate_and_get_state_size(num_qubits_, num_layers_,
                                                  num_qubits_ * num_layers_ * 2)),
           num_ops(num_layers_ * (num_qubits_ + 1)),
           strategy(parse_gradient_strategy(gradient_strategy_)),
-          mode2_rotation_chunk_width(mode2_rotation_chunk_width_),
+          structured_rotation_chunk_width(structured_rotation_chunk_width_),
           current(state_size), lambda(state_size), scratch(state_size),
           gate_level_gradients(expected_params) {
-        if (strategy == GradientStrategy::Mode2 &&
-            mode2_rotation_chunk_width == 0) {
+        if (is_structured_adjoint_family(strategy) &&
+            structured_rotation_chunk_width == 0) {
             throw std::invalid_argument(
-                "mode2_rotation_chunk_width must be at least 1.");
+                "structured_rotation_chunk_width must be at least 1.");
         }
-        if (strategy == GradientStrategy::Mode2 &&
-            mode2_rotation_chunk_width > MODE2_ROTATION_CHUNK_WIRES) {
+        if (is_structured_adjoint_family(strategy) &&
+            structured_rotation_chunk_width > STRUCTURED_ROTATION_CHUNK_WIRES) {
             throw std::invalid_argument(
-                "mode2_rotation_chunk_width exceeds supported maximum.");
+                "structured_rotation_chunk_width exceeds supported maximum.");
         }
-        if (strategy == GradientStrategy::Mode2) {
+        if (is_structured_adjoint_family(strategy)) {
             cnot_scratch.allocate(state_size);
-        }
-        if (strategy == GradientStrategy::SaveParamStates) {
-            save_param_states.allocate(expected_params * state_size);
         }
     }
 };
@@ -384,10 +379,10 @@ RingIsingCudaBackend::RingIsingCudaBackend(std::size_t num_qubits,
                                            std::size_t num_layers,
                                            double field,
                                            const std::string &gradient_strategy,
-                                           std::size_t mode2_rotation_chunk_width)
+                                           std::size_t structured_rotation_chunk_width)
     : impl_(std::make_unique<Impl>(num_qubits, num_layers, field,
                                    gradient_strategy,
-                                   mode2_rotation_chunk_width)) {}
+                                   structured_rotation_chunk_width)) {}
 
 RingIsingCudaBackend::~RingIsingCudaBackend() = default;
 
@@ -418,10 +413,10 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  const double *params, std::size_t num_params,
                                  bool compute_gradient,
                                  bool profile,
-                                 std::size_t mode2_rotation_chunk_width) {
+                                 std::size_t structured_rotation_chunk_width) {
     RingIsingCudaBackend backend(num_qubits, num_layers, field,
                                  gradient_strategy,
-                                 mode2_rotation_chunk_width);
+                                 structured_rotation_chunk_width);
     return backend.energy_and_grad(params, num_params, compute_gradient, profile);
 }
 

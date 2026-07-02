@@ -7,11 +7,19 @@ from dataclasses import dataclass
 BACKENDS = ("pennylane", "standalone")
 STANDALONE_GRADIENT_STRATEGIES = (
     "inverse_walk",
-    "mode2",
-    "save_param_states",
+    "structured_adjoint",
     "dense_scan",
 )
-MODE2_ROTATION_CHUNK_WIDTH_MAX = 8
+EXPERIMENTAL_STANDALONE_GRADIENT_STRATEGIES = ("ryrz_fused",)
+STANDALONE_GRADIENT_STRATEGY_ALIASES = {
+    "mode2": "structured_adjoint",
+}
+SUPPORTED_STANDALONE_GRADIENT_STRATEGIES = (
+    *STANDALONE_GRADIENT_STRATEGIES,
+    *EXPERIMENTAL_STANDALONE_GRADIENT_STRATEGIES,
+    *STANDALONE_GRADIENT_STRATEGY_ALIASES,
+)
+STRUCTURED_ROTATION_CHUNK_WIDTH_MAX = 8
 DEFAULT_PROGRESS_PARTITIONS = 60
 
 
@@ -33,5 +41,12 @@ class RunConfig:
     gpu_telemetry: bool = False
     telemetry_interval_s: float = 0.5
     telemetry_live: bool = False
-    gradient_strategy: str = "inverse_walk"
-    mode2_rotation_chunk_width: int = 8
+    gradient_strategy: str = "structured_adjoint"
+    structured_rotation_chunk_width: int = 8
+    mode2_rotation_chunk_width: int | None = None
+
+    @property
+    def effective_structured_rotation_chunk_width(self) -> int:
+        if self.mode2_rotation_chunk_width is not None:
+            return self.mode2_rotation_chunk_width
+        return self.structured_rotation_chunk_width

@@ -21,17 +21,19 @@ CASES = (
 SEEDS = (123, 321, 2026)
 MODES = (
     "inverse_walk",
-    "mode2",
-    "save_param_states",
+    "ryrz_fused",
+    "structured_adjoint",
     "dense_scan",
 )
 TOLERANCES = {
     "inverse_walk": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "ryrz_fused": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "structured_adjoint": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "mode2": {"energy_atol": 1e-9, "grad_atol": 1e-8},
-    "save_param_states": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "dense_scan": {"energy_atol": 1e-8, "grad_atol": 1e-7},
 }
 REMOVED_MODES = (
+    "save_param_states",
     "checkpoint",
     "block_fused_adjoint",
     "intrablock_parallel",
@@ -73,7 +75,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
         num_qubits: int,
         field: float,
         params: np.ndarray,
-        mode2_width: int = 1,
+        structured_width: int = 1,
     ) -> tuple[float, np.ndarray]:
         backend = RingIsingAdjointBackend(
             StandaloneBackendConfig(
@@ -81,7 +83,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 layers=LAYERS,
                 field=field,
                 gradient_strategy=mode,
-                mode2_rotation_chunk_width=mode2_width,
+                structured_rotation_chunk_width=structured_width,
             )
         )
         return backend.energy_and_grad(params)
@@ -125,18 +127,18 @@ class StandaloneBackendParityTest(unittest.TestCase):
                             rtol=tolerances["grad_atol"],
                         )
 
-    def test_inverse_walk_variants_match_save_param_states_beyond_small_reference_cases(self) -> None:
+    def test_gate_level_and_structured_variants_match_beyond_small_reference_cases(self) -> None:
         num_qubits = 8
         field = 0.9
         params = self._make_params(seed=2028, num_qubits=num_qubits)
 
         reference_energy, reference_grad = self._standalone_result(
-            mode="save_param_states",
+            mode="inverse_walk",
             num_qubits=num_qubits,
             field=field,
             params=params,
         )
-        for mode in ("inverse_walk", "mode2"):
+        for mode in ("ryrz_fused", "structured_adjoint", "mode2"):
             with self.subTest(mode=mode):
                 energy, grad = self._standalone_result(
                     mode=mode,
@@ -158,39 +160,60 @@ class StandaloneBackendParityTest(unittest.TestCase):
                     rtol=TOLERANCES[mode]["grad_atol"],
                 )
 
-    def test_mode2_rotation_chunk_widths_match_reference(self) -> None:
+    def test_structured_rotation_chunk_widths_match_reference(self) -> None:
         num_qubits = 10
         field = 0.9
         params = self._make_params(seed=2030, num_qubits=num_qubits)
         reference_energy, reference_grad = self._standalone_result(
-            mode="mode2",
+            mode="structured_adjoint",
             num_qubits=num_qubits,
             field=field,
             params=params,
-            mode2_width=1,
+            structured_width=1,
         )
 
         for width in (2, 3, 4, 8):
-            with self.subTest(mode2_width=width):
+            with self.subTest(structured_width=width):
                 energy, grad = self._standalone_result(
-                    mode="mode2",
+                    mode="structured_adjoint",
                     num_qubits=num_qubits,
                     field=field,
                     params=params,
-                    mode2_width=width,
+                    structured_width=width,
                 )
                 np.testing.assert_allclose(
                     energy,
                     reference_energy,
-                    atol=TOLERANCES["mode2"]["energy_atol"],
-                    rtol=TOLERANCES["mode2"]["energy_atol"],
+                    atol=TOLERANCES["structured_adjoint"]["energy_atol"],
+                    rtol=TOLERANCES["structured_adjoint"]["energy_atol"],
                 )
                 np.testing.assert_allclose(
                     grad,
                     reference_grad,
-                    atol=TOLERANCES["mode2"]["grad_atol"],
-                    rtol=TOLERANCES["mode2"]["grad_atol"],
+                    atol=TOLERANCES["structured_adjoint"]["grad_atol"],
+                    rtol=TOLERANCES["structured_adjoint"]["grad_atol"],
                 )
+
+    def test_mode2_alias_matches_structured_adjoint(self) -> None:
+        num_qubits = 8
+        field = 0.9
+        params = self._make_params(seed=2031, num_qubits=num_qubits)
+        reference_energy, reference_grad = self._standalone_result(
+            mode="structured_adjoint",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
+            structured_width=4,
+        )
+        energy, grad = self._standalone_result(
+            mode="mode2",
+            num_qubits=num_qubits,
+            field=field,
+            params=params,
+            structured_width=4,
+        )
+        np.testing.assert_allclose(energy, reference_energy, atol=1e-9, rtol=1e-9)
+        np.testing.assert_allclose(grad, reference_grad, atol=1e-8, rtol=1e-8)
 
     def test_removed_legacy_modes_are_rejected(self) -> None:
         for mode in REMOVED_MODES:
@@ -212,7 +235,7 @@ class StandaloneBackendParityTest(unittest.TestCase):
                 gradient_strategy="dense_scan",
             ).validate()
 
-    def test_mode2_rotation_chunk_width_is_validated(self) -> None:
+    def test_structured_rotation_chunk_width_is_validated(self) -> None:
         for width in (0, 9):
             with self.subTest(width=width):
                 with self.assertRaises(ValueError):
@@ -220,8 +243,8 @@ class StandaloneBackendParityTest(unittest.TestCase):
                         num_qubits=4,
                         layers=LAYERS,
                         field=1.0,
-                        gradient_strategy="mode2",
-                        mode2_rotation_chunk_width=width,
+                        gradient_strategy="structured_adjoint",
+                        structured_rotation_chunk_width=width,
                     ).validate()
 
 

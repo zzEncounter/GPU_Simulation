@@ -13,9 +13,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ring_ising import RunConfig, run_standalone
-from ring_ising.config import STANDALONE_GRADIENT_STRATEGIES
+from ring_ising.config import SUPPORTED_STANDALONE_GRADIENT_STRATEGIES
 
-VALID_MODES = STANDALONE_GRADIENT_STRATEGIES
+VALID_MODES = SUPPORTED_STANDALONE_GRADIENT_STRATEGIES
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
         "--modes",
         nargs="+",
         type=parse_mode,
-        default=["inverse_walk"],
+        default=["inverse_walk", "structured_adjoint"],
         help="Standalone gradient strategies to compare.",
     )
     parser.add_argument(

@@ -20,7 +20,7 @@ class RingIsingCudaBackend {
 
     RingIsingCudaBackend(std::size_t num_qubits, std::size_t num_layers,
                          double field, const std::string &gradient_strategy,
-                         std::size_t mode2_rotation_chunk_width = 8);
+                         std::size_t structured_rotation_chunk_width = 8);
     ~RingIsingCudaBackend();
 
     RingIsingCudaBackend(const RingIsingCudaBackend &) = delete;
@@ -44,6 +44,6 @@ EnergyGradResult energy_and_grad(std::size_t num_qubits,
                                  const double *params, std::size_t num_params,
                                  bool compute_gradient = true,
                                  bool profile = false,
-                                 std::size_t mode2_rotation_chunk_width = 8);
+                                 std::size_t structured_rotation_chunk_width = 8);
 
 } // namespace standalone_backend

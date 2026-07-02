@@ -136,23 +136,12 @@ void launch_inverse_walk_ryrz_rotation_chunk(
 void launch_inverse_walk_cnot_step(Complex *current, Complex *lambda,
                                    std::size_t size, std::size_t control,
                                    std::size_t target);
-void launch_save_param_ry_step(const Complex *state_before, Complex *lambda,
-                               std::size_t size, std::size_t wire,
-                               double theta, double *out_gradient);
-void launch_save_param_rz_step(const Complex *state_before, Complex *lambda,
-                               std::size_t size, std::size_t wire,
-                               double theta, double *out_gradient);
 void launch_apply_hamiltonian(Complex *out, const Complex *state,
                               std::size_t size, std::size_t num_qubits,
                               double field);
 
 auto complex_inner_product(const Complex *lhs, const Complex *rhs,
                            std::size_t size) -> Complex;
-
-auto fused_ryrz_gradients(const Complex *lambda, const Complex *state,
-                          std::size_t state_size, std::size_t wire,
-                          double theta_ry, double theta_rz)
-    -> std::pair<double, double>;
 
 void launch_fill_identity_matrices(Complex *mats, std::size_t batch,
                                    std::size_t dim);

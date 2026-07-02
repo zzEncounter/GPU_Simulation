@@ -9,6 +9,7 @@ __all__ = [
     "PennyLaneWorkflow",
     "RunConfig",
     "STANDALONE_GRADIENT_STRATEGIES",
+    "SUPPORTED_STANDALONE_GRADIENT_STRATEGIES",
     "StandaloneBackendConfig",
     "StandaloneResult",
     "StandaloneWorkflow",
@@ -31,12 +32,14 @@ def __getattr__(name: str):
         "DEFAULT_PROGRESS_PARTITIONS",
         "RunConfig",
         "STANDALONE_GRADIENT_STRATEGIES",
+        "SUPPORTED_STANDALONE_GRADIENT_STRATEGIES",
     }:
         from .config import (
             BACKENDS,
             DEFAULT_PROGRESS_PARTITIONS,
             RunConfig,
             STANDALONE_GRADIENT_STRATEGIES,
+            SUPPORTED_STANDALONE_GRADIENT_STRATEGIES,
         )
 
         namespace = {
@@ -44,6 +47,9 @@ def __getattr__(name: str):
             "DEFAULT_PROGRESS_PARTITIONS": DEFAULT_PROGRESS_PARTITIONS,
             "RunConfig": RunConfig,
             "STANDALONE_GRADIENT_STRATEGIES": STANDALONE_GRADIENT_STRATEGIES,
+            "SUPPORTED_STANDALONE_GRADIENT_STRATEGIES": (
+                SUPPORTED_STANDALONE_GRADIENT_STRATEGIES
+            ),
         }
         return namespace[name]
 

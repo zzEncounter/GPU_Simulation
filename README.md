@@ -42,19 +42,19 @@
 
 ## Standalone Backend 当前策略
 
-梯度内存策略仅保留：
+公开策略保留：
 
-- `inverse_walk`
-- `mode2`（实验模式：structured/fused forward + partially fused backward）
-- `save_param_states`
-- `dense_scan`（实验模式，要求 `num_qubits <= 6`）
+- `structured_adjoint`：默认主实现，利用 QML ring layer 结构做 forward/backward fusion。
+- `inverse_walk`：门级 adjoint baseline，严格按 `RY -> RZ -> CNOT` 门级结构执行。
+- `dense_scan`：特殊实验路径，要求 `num_qubits <= 6`，保留给后续 dense/block scan 方向。
 
 补充说明：
 
 - `save_all` 路径已经从对外接口移除。
-- `inverse_walk` 与 `save_param_states` 固定使用与 PennyLane 一致的 `RY -> RZ -> CNOT` 门级结构，不做 gate fusion。
-- `mode2` 使用与 `inverse_walk` 相同的 adjoint 思路，但 forward 阶段合并每个 wire 的 `RY+RZ`，并使用 fused ring-CNOT layer；backward 阶段也会 per-wire 合并 `RY+RZ` 的反推与两个参数梯度计算，并用 fused inverse ring-CNOT layer 分别更新 `current` / `lambda`。默认 `mode2_rotation_chunk_width=8`；backward rotation 会按问题规模选择有效 chunk 宽度，12-15 qubit 降到 4，16 qubit 以上只在请求 8 时启用 chunk，以避开较窄高位 chunk 的大 stride 开销。可通过 `mode2_rotation_chunk_width` / `--mode2-rotation-chunk-width` 调整 structured rotation-layer fusion 目标宽度；`1` 等价 per-wire fused，`2..8` 表示一次 kernel 顺序融合多个 qubit 的旋转。
-- `dense_scan` 是保留的特殊实验路径，继续使用它自己的 fused dense gate 结构。
+- `save_param_states` 路径已经从当前 standalone 策略入口移除。
+- `ryrz_fused` 仍作为实验对照可用：它只把同一 wire 上连续的 `RY+RZ` 合并为一个 statevector kernel，CNOT 仍按门逐个执行，用于隔离评估 per-wire rotation fusion 的收益。
+- `mode2` 是 `structured_adjoint` 的兼容 alias，旧实验命令仍可解析。
+- `structured_adjoint` 使用与 `inverse_walk` 相同的 adjoint 数学思路，但 forward 阶段合并每个 wire 的 `RY+RZ`，并使用 fused ring-CNOT layer；backward 阶段也会 per-wire 合并 `RY+RZ` 的反推与两个参数梯度计算，并用 fused inverse ring-CNOT layer 分别更新 `current` / `lambda`。默认 `structured_rotation_chunk_width=8`；backward rotation 会按问题规模选择有效 chunk 宽度，12-15 qubit 降到 4，16-19 qubit 只在请求 8 时启用 chunk，20 qubit 以上会将 8 号以上高位拆成 W2-W4 chunk，其中 W4 使用 two-wire cell kernel、W2/W3 使用 transposed kernel；低位 0-7 保留 W8 chunk，并在 24 qubit 以上使用 two-wire cell kernel。可通过 `structured_rotation_chunk_width` / `--structured-rotation-chunk-width` 调整 structured rotation-layer fusion 目标宽度；`1` 等价 per-wire fused，`2..8` 表示一次 kernel 顺序融合多个 qubit 的旋转。
 - `debug/stage-profile` 分支在 baseline/实验模式上增加了细粒度阶段耗时分析能力，便于后续从基线重新派生新方案。
 
 ## C++/CUDA 拆分状态
@@ -63,8 +63,11 @@
 
 - `ising_cuda_backend.cu`：调度、策略流程、对外接口。
 - `ising_cuda_kernels.cu`：CUDA runtime 检查、基础 statevector gate、Hamiltonian、inner product。
-- `ising_cuda_rotation_kernels.cu`：`mode2` rotation chunk fusion kernel 与 launch wrapper。
-- `ising_cuda_statevector_grad_kernels.cu`：inverse-walk / save-param statevector 梯度 kernel。
+- `ising_cuda_rotation_kernels.cu`：`structured_adjoint` forward rotation chunk fusion kernel 与 launch wrapper。
+- `ising_cuda_statevector_grad_kernels.cu`：gate-level / structured adjoint statevector 梯度 kernel。
+- `ising_cuda_structured_adjoint_modes.inc`：`structured_adjoint` forward/backward 调度。
+- `ising_cuda_gate_level_adjoint_modes.inc`：`inverse_walk` 与 `ryrz_fused` gate-level adjoint 调度。
+- `ising_cuda_statevector_energy.inc`：statevector energy-only 与策略 dispatch。
 - `ising_cuda_dense_kernels.cu`：dense scan 与 block simulation kernel。
 - `ising_cuda_kernel_common.cuh`：kernel 翻译单元共享的常量与 device helper。
 - `ising_cuda_backend_internal.cuh`：内部共享类型与函数声明。
@@ -103,10 +106,9 @@ python -m venv .venv
 
 ```bash
 # 指定梯度策略
-.venv/bin/python run_workflow.py --backend standalone --gradient-strategy save_param_states
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy structured_adjoint
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy inverse_walk
-.venv/bin/python run_workflow.py --backend standalone --gradient-strategy mode2
-.venv/bin/python run_workflow.py --backend standalone --gradient-strategy mode2 --mode2-rotation-chunk-width 3
+.venv/bin/python run_workflow.py --backend standalone --gradient-strategy structured_adjoint --structured-rotation-chunk-width 3
 .venv/bin/python run_workflow.py --backend standalone --gradient-strategy dense_scan
 
 # 开启详细 step 报告；默认只显示进度条
@@ -136,7 +138,7 @@ standalone_result = run(
         num_qubits=12,
         layers=3,
         steps=20,
-        gradient_strategy="save_param_states",
+        gradient_strategy="structured_adjoint",
     )
 )
 ```
@@ -152,7 +154,7 @@ standalone_result = run(
 ```bash
 .venv/bin/python benchmarks/compare_gradient_strategy.py \
   --cases 4x8 5x32 6x128 \
-  --modes inverse_walk mode2 save_param_states dense_scan \
+  --modes inverse_walk structured_adjoint dense_scan \
   --reference-mode inverse_walk
 ```
 
