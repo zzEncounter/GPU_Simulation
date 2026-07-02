@@ -27,6 +27,9 @@ void run_inverse_walk_backward_sweep(RingIsingCudaBackend::Impl &impl,
                 impl.gate_level_gradients.get() + op.param_index0,
                 impl.gate_level_gradients.get() + op.param_index1);
             break;
+        case OpKind::RotationLayer:
+            throw std::runtime_error(
+                "inverse_walk backward sweep cannot consume RotationLayer ops.");
         case OpKind::RingCNOTLayer:
             throw std::runtime_error(
                 "inverse_walk backward sweep cannot consume RingCNOTLayer ops.");

@@ -1100,14 +1100,14 @@ def main() -> None:
     invalid_dense_cases = [
         case
         for case in args.cases
-        if case.num_qubits > 6 and "dense_scan" in labels
+        if case.num_qubits > 8 and "dense_scan" in labels
     ]
     if invalid_dense_cases:
         invalid_text = ", ".join(
             f"{case.num_qubits}x{case.layers}" for case in invalid_dense_cases
         )
         raise ValueError(
-            "dense_scan requires num_qubits <= 6. "
+            "dense_scan requires num_qubits <= 8. "
             f"Unsupported cases: {invalid_text}"
         )
 

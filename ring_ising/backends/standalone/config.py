@@ -63,7 +63,7 @@ class StandaloneBackendConfig:
         }:
             return 4
         if normalized == "dense_scan":
-            num_ops = self.layers * (self.num_qubits + 1)
+            num_ops = self.layers * 2
             padded = 1 << (num_ops - 1).bit_length() if num_ops > 0 else 1
             return 3 * padded + max(num_ops + 1, padded) + 3
         raise ValueError(
@@ -73,22 +73,16 @@ class StandaloneBackendConfig:
     def estimated_gradient_workspace_gib_for(self, strategy: str) -> float:
         normalized = STANDALONE_GRADIENT_STRATEGY_ALIASES.get(strategy, strategy)
         if normalized == "dense_scan":
-            num_ops = self.layers * (self.num_qubits + 1)
+            num_ops = self.layers * 2
             if num_ops <= 0:
                 return 0.0
             padded = 1 << (num_ops - 1).bit_length()
-            matrix_count = (
-                num_ops
-                + self.num_params
-                + padded
-                + max(0, padded - 1)
-                + 2
-            )
+            matrix_count = num_ops + padded + max(0, padded - 1) + 2
             vector_count = 3 * padded + max(num_ops + 1, padded) + 3
             bytes_total = (
                 matrix_count * self.dense_matrix_nbytes
                 + vector_count * self.statevector_nbytes
-                + self.num_params * (8 + 4)
+                + self.num_params * (8 + 8 + 4)
             )
             return bytes_total / (1024**3)
         return (
@@ -109,8 +103,8 @@ class StandaloneBackendConfig:
                 f"{STANDALONE_GRADIENT_STRATEGIES!r}; experimental/legacy "
                 f"accepted strategies are {SUPPORTED_STANDALONE_GRADIENT_STRATEGIES!r}."
             )
-        if strategy == "dense_scan" and self.num_qubits > 6:
-            raise ValueError("dense_scan requires num_qubits <= 6.")
+        if strategy == "dense_scan" and self.num_qubits > 8:
+            raise ValueError("dense_scan requires num_qubits <= 8.")
         chunk_width = self.effective_structured_rotation_chunk_width
         if chunk_width < 1:
             raise ValueError(

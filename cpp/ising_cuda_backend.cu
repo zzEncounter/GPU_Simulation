@@ -209,6 +209,9 @@ void apply_op_inplace(Complex *state, std::size_t size, const OpDesc &op,
         detail::launch_apply_ryrz(state, size, op.wire0, op.theta0, op.theta1,
                                   inverse);
         break;
+    case OpKind::RotationLayer:
+        throw std::runtime_error(
+            "RotationLayer is only supported by the dense_scan matrix path.");
     case OpKind::RingCNOTLayer:
         if (scratch == nullptr) {
             throw std::runtime_error(
@@ -323,7 +326,6 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<double> gate_level_gradients;
     std::unique_ptr<CublasHandle> dense_cublas;
     DeviceBuffer<Complex> dense_gate_mats;
-    DeviceBuffer<Complex> dense_dgate_mats;
     DeviceBuffer<Complex> dense_hamiltonian;
     DeviceBuffer<int> dense_param_gate_indices;
     DeviceBuffer<Complex> dense_prefix_scan;
@@ -337,6 +339,7 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<Complex> dense_eta_before;
     DeviceBuffer<Complex> dense_suffix_scan;
     DeviceBuffer<double> dense_gradients;
+    DeviceBuffer<double> dense_params;
     DenseGateStorage dense_storage_cache;
     std::vector<std::size_t> dense_param_op_indices;
     std::vector<Complex> dense_hamiltonian_host;

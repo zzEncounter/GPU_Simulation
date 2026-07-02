@@ -13,8 +13,8 @@ void ensure_dense_scan_buffers(RingIsingCudaBackend::Impl &impl,
         return true;
     };
 
-    ensure_alloc(impl.dense_gate_mats, storage.gate_mats.size());
-    ensure_alloc(impl.dense_dgate_mats, storage.dgate_mats.size());
+    const bool gate_mats_reallocated =
+        ensure_alloc(impl.dense_gate_mats, storage.gate_mats_size);
     const bool hamiltonian_reallocated =
         ensure_alloc(impl.dense_hamiltonian, mat_elements);
     const bool param_indices_reallocated =
@@ -31,27 +31,24 @@ void ensure_dense_scan_buffers(RingIsingCudaBackend::Impl &impl,
     ensure_alloc(impl.dense_eta_vector, dim);
     ensure_alloc(impl.dense_eta_before, padded * dim);
     ensure_alloc(impl.dense_gradients, impl.expected_params);
+    ensure_alloc(impl.dense_params, impl.expected_params);
 
-    if (hamiltonian_reallocated || param_indices_reallocated || psi0_reallocated) {
+    if (gate_mats_reallocated || hamiltonian_reallocated ||
+        param_indices_reallocated || psi0_reallocated) {
         impl.dense_static_device_uploaded = false;
     }
 }
 
 void upload_dense_scan_inputs(RingIsingCudaBackend::Impl &impl,
-                              const DenseGateStorage &storage) {
+                              const DenseGateStorage &storage,
+                              const double *params) {
     const auto dim = impl.state_size;
     const auto mat_elements = dim * dim;
 
-    detail::check_cuda(cudaMemcpyAsync(impl.dense_gate_mats.get(),
-                                       storage.gate_mats.data(),
-                                       sizeof(Complex) * storage.gate_mats.size(),
+    detail::check_cuda(cudaMemcpyAsync(impl.dense_params.get(), params,
+                                       sizeof(double) * impl.expected_params,
                                        cudaMemcpyHostToDevice, 0),
-                       "copy gate mats");
-    detail::check_cuda(cudaMemcpyAsync(
-                           impl.dense_dgate_mats.get(), storage.dgate_mats.data(),
-                           sizeof(Complex) * storage.dgate_mats.size(),
-                           cudaMemcpyHostToDevice, 0),
-                       "copy derivative mats");
+                       "copy dense scan params");
 
     if (!impl.dense_static_device_uploaded) {
         detail::check_cuda(
@@ -86,8 +83,14 @@ void upload_dense_scan_inputs(RingIsingCudaBackend::Impl &impl,
                                            sizeof(Complex) * dim,
                                            cudaMemcpyHostToDevice, 0),
                            "copy psi0");
+        detail::launch_fill_ring_cnot_layer_matrices(
+            impl.dense_gate_mats.get(), impl.num_layers, impl.num_qubits, dim);
         impl.dense_static_device_uploaded = true;
     }
+
+    detail::launch_fill_rotation_layer_matrices(
+        impl.dense_gate_mats.get(), impl.dense_param_gate_indices.get(),
+        impl.dense_params.get(), impl.num_layers, impl.num_qubits, dim);
 }
 
 void build_dense_product_tree(RingIsingCudaBackend::Impl &impl,
@@ -240,15 +243,16 @@ void run_dense_vector_downsweep(RingIsingCudaBackend::Impl &impl,
 void run_dense_gradient_tail(RingIsingCudaBackend::Impl &impl,
                              std::size_t num_params_local,
                              std::size_t dim) {
-    detail::launch_fused_dense_gradient_tail(
-        impl.dense_gate_mats.get(), impl.dense_dgate_mats.get(),
-        impl.dense_param_gate_indices.get(), impl.dense_psi_before.get(),
-        impl.dense_eta_before.get(), impl.dense_gradients.get(), num_params_local,
-        dim);
+    (void)num_params_local;
+    detail::launch_rotation_layer_dense_gradient_tail(
+        impl.dense_param_gate_indices.get(), impl.dense_params.get(),
+        impl.dense_psi_before.get(), impl.dense_eta_before.get(),
+        impl.dense_gradients.get(), impl.num_layers, impl.num_qubits, dim);
 }
 
 auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
-                                 const DenseGateStorage &storage)
+                                 const DenseGateStorage &storage,
+                                 const double *params)
     -> DenseScanGpuRunResult {
     const auto num_ops = storage.ops.size();
     const auto dim = impl.state_size;
@@ -262,7 +266,7 @@ auto run_dense_scan_gpu_pipeline(RingIsingCudaBackend::Impl &impl,
     auto &cublas = *impl.dense_cublas;
 
     ensure_dense_scan_buffers(impl, storage);
-    upload_dense_scan_inputs(impl, storage);
+    upload_dense_scan_inputs(impl, storage, params);
 
     build_dense_product_tree(impl, num_ops, dim);
     Complex *root_matrix = product_tree_level_ptr(impl, padded, 1);
@@ -346,8 +350,8 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
                                          const double *params,
                                          std::size_t num_params)
     -> EnergyGradResult {
-    if (impl.num_qubits > 6) {
-        throw std::invalid_argument("dense_scan only supports num_qubits <= 6.");
+    if (impl.num_qubits > 8) {
+        throw std::invalid_argument("dense_scan only supports num_qubits <= 8.");
     }
     validate_num_params(impl.expected_params, num_params);
 
@@ -355,10 +359,8 @@ auto run_dense_scan_energy_and_grad_fast(RingIsingCudaBackend::Impl &impl,
                                      &impl.dense_param_op_indices,
                                      impl.num_qubits, impl.num_layers,
                                      true);
-    update_dense_gate_storage_params(&impl.dense_storage_cache,
-                                     impl.dense_param_op_indices,
-                                     impl.num_qubits, params);
-    auto gpu = run_dense_scan_gpu_pipeline(impl, impl.dense_storage_cache);
+    auto gpu = run_dense_scan_gpu_pipeline(impl, impl.dense_storage_cache,
+                                           params);
 
     EnergyGradResult result;
     result.energy = gpu.energy;

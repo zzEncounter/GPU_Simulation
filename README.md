@@ -46,7 +46,7 @@
 
 - `structured_adjoint`：默认主实现，利用 QML ring layer 结构做 forward/backward fusion。
 - `inverse_walk`：门级 adjoint baseline，严格按 `RY -> RZ -> CNOT` 门级结构执行。
-- `dense_scan`：特殊实验路径，要求 `num_qubits <= 6`，保留给后续 dense/block scan 方向。
+- `dense_scan`：小比特 dense product-tree 路径，要求 `num_qubits <= 8`。每层电路压缩为一个 dense rotation layer 和一个 dense ring-CNOT layer；CNOT 矩阵在 GPU 上静态填充，rotation 矩阵每步在 GPU 上由参数填充，梯度 tail 直接利用 rotation layer 的 tensor-product 结构计算导数。
 
 补充说明：
 
@@ -68,7 +68,7 @@
 - `ising_cuda_structured_adjoint_modes.inc`：`structured_adjoint` forward/backward 调度。
 - `ising_cuda_gate_level_adjoint_modes.inc`：`inverse_walk` 与 `ryrz_fused` gate-level adjoint 调度。
 - `ising_cuda_statevector_energy.inc`：statevector energy-only 与策略 dispatch。
-- `ising_cuda_dense_kernels.cu`：dense scan 与 block simulation kernel。
+- `ising_cuda_dense_kernels.cu`：dense scan product-tree 辅助、rotation-layer dense 填充、dense gradient tail 与 block simulation kernel。
 - `ising_cuda_kernel_common.cuh`：kernel 翻译单元共享的常量与 device helper。
 - `ising_cuda_backend_internal.cuh`：内部共享类型与函数声明。
 - `ising_cuda_bindings.cpp`：pybind11 绑定。
@@ -177,4 +177,4 @@ Kernel 级 profiling：
 
 如果 `ncu` 报 `ERR_NVGPUCTRPERM`，需要先为当前用户开启 NVIDIA GPU performance counter 权限。
 
-`dense_scan` 只适用于 `qubits <= 6` 的条目。
+`dense_scan` 只适用于 `qubits <= 8` 的条目。

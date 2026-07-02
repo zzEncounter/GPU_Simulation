@@ -215,6 +215,46 @@ class StandaloneBackendParityTest(unittest.TestCase):
         np.testing.assert_allclose(energy, reference_energy, atol=1e-9, rtol=1e-9)
         np.testing.assert_allclose(grad, reference_grad, atol=1e-8, rtol=1e-8)
 
+    def test_dense_scan_matches_structured_for_deeper_small_qubit_circuit(
+        self,
+    ) -> None:
+        field = 1.0
+        for num_qubits, layers, seed in ((6, 32, 2032), (8, 8, 2033)):
+            rng = np.random.default_rng(seed)
+            params = 0.2 * rng.standard_normal((layers, num_qubits, 2))
+
+            reference_backend = RingIsingAdjointBackend(
+                StandaloneBackendConfig(
+                    num_qubits=num_qubits,
+                    layers=layers,
+                    field=field,
+                    gradient_strategy="structured_adjoint",
+                )
+            )
+            dense_backend = RingIsingAdjointBackend(
+                StandaloneBackendConfig(
+                    num_qubits=num_qubits,
+                    layers=layers,
+                    field=field,
+                    gradient_strategy="dense_scan",
+                )
+            )
+
+            reference_energy, reference_grad = reference_backend.energy_and_grad(params)
+            dense_energy, dense_grad = dense_backend.energy_and_grad(params)
+            np.testing.assert_allclose(
+                dense_energy,
+                reference_energy,
+                atol=TOLERANCES["dense_scan"]["energy_atol"],
+                rtol=TOLERANCES["dense_scan"]["energy_atol"],
+            )
+            np.testing.assert_allclose(
+                dense_grad,
+                reference_grad,
+                atol=TOLERANCES["dense_scan"]["grad_atol"],
+                rtol=TOLERANCES["dense_scan"]["grad_atol"],
+            )
+
     def test_removed_legacy_modes_are_rejected(self) -> None:
         for mode in REMOVED_MODES:
             with self.subTest(mode=mode):
@@ -226,14 +266,39 @@ class StandaloneBackendParityTest(unittest.TestCase):
                         gradient_strategy=mode,
                     ).validate()
 
-    def test_dense_scan_rejects_more_than_six_qubits(self) -> None:
+    def test_dense_scan_rejects_more_than_eight_qubits(self) -> None:
         with self.assertRaises(ValueError):
             StandaloneBackendConfig(
-                num_qubits=7,
+                num_qubits=9,
                 layers=LAYERS,
                 field=1.0,
                 gradient_strategy="dense_scan",
             ).validate()
+
+    def test_dense_scan_workspace_estimate_uses_layer_level_ops(self) -> None:
+        config = StandaloneBackendConfig(
+            num_qubits=6,
+            layers=32,
+            field=1.0,
+            gradient_strategy="dense_scan",
+        )
+        num_ops = config.layers * 2
+        padded = 1 << (num_ops - 1).bit_length()
+        matrix_count = num_ops + padded + max(0, padded - 1) + 2
+        vector_count = 3 * padded + max(num_ops + 1, padded) + 3
+        expected_workspace_gib = (
+            matrix_count * config.dense_matrix_nbytes
+            + vector_count * config.statevector_nbytes
+            + config.num_params * (8 + 8 + 4)
+        ) / (1024**3)
+        self.assertEqual(
+            config.estimated_gradient_state_buffers_for("dense_scan"),
+            3 * padded + max(num_ops + 1, padded) + 3,
+        )
+        self.assertAlmostEqual(
+            config.estimated_gradient_workspace_gib_for("dense_scan"),
+            expected_workspace_gib,
+        )
 
     def test_structured_rotation_chunk_width_is_validated(self) -> None:
         for width in (0, 9):

@@ -12,7 +12,7 @@
 
 namespace standalone_backend {
 
-enum class OpKind : int { RY, RZ, CNOT, FusedRYRZ, RingCNOTLayer };
+enum class OpKind : int { RY, RZ, CNOT, FusedRYRZ, RotationLayer, RingCNOTLayer };
 
 struct OpDesc {
     OpKind kind;
@@ -149,13 +149,20 @@ void launch_scatter_parent_vectors(const Complex *parent_vectors,
                                    Complex *child_vectors,
                                    std::size_t parent_count,
                                    std::size_t vector_size);
-void launch_fused_dense_gradient_tail(const Complex *gate_mats,
-                                      const Complex *dgate_mats,
-                                      const int *param_gate_indices,
-                                      const Complex *psi_before,
-                                      const Complex *eta_before, double *out,
-                                      std::size_t num_params,
-                                      std::size_t vector_size);
+void launch_fill_rotation_layer_matrices(Complex *gate_mats,
+                                         const int *param_gate_indices,
+                                         const double *params,
+                                         std::size_t num_layers,
+                                         std::size_t num_qubits,
+                                         std::size_t dim);
+void launch_fill_ring_cnot_layer_matrices(Complex *gate_mats,
+                                          std::size_t num_layers,
+                                          std::size_t num_qubits,
+                                          std::size_t dim);
+void launch_rotation_layer_dense_gradient_tail(
+    const int *param_gate_indices, const double *params,
+    const Complex *psi_before, const Complex *eta_before, double *out,
+    std::size_t num_layers, std::size_t num_qubits, std::size_t vector_size);
 
 void launch_simulate_blocks_forward(const OpDesc *ops, std::size_t num_blocks,
                                     std::size_t block_size, std::size_t num_ops,

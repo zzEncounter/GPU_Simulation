@@ -119,10 +119,10 @@ def main() -> None:
         steps = default_steps_for(case)
         case_rows: list[dict[str, object]] = []
         for mode in args.modes:
-            if mode == "dense_scan" and case.num_qubits > 6:
+            if mode == "dense_scan" and case.num_qubits > 8:
                 print(
                     f"Skipping dense_scan for {case.num_qubits} qubits x {case.layers} layers "
-                    "(dense_scan requires qubits <= 6)"
+                    "(dense_scan requires qubits <= 8)"
                 )
                 continue
             result = run_standalone(build_run_config(mode, case=case, steps=steps, args=args))

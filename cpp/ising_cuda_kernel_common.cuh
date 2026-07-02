@@ -7,7 +7,9 @@
 namespace standalone_backend {
 namespace detail {
 
-constexpr std::size_t DENSE_SCAN_MAX_DIM = 64;
+constexpr std::size_t DENSE_SCAN_MAX_DIM = 256;
+constexpr std::size_t DENSE_SCAN_MAX_QUBITS = 8;
+constexpr std::size_t DENSE_SCAN_MAX_LAYER_PARAMS = 2 * DENSE_SCAN_MAX_QUBITS;
 constexpr std::size_t ROTATION_CHUNK_MAX_WIRES = 8;
 
 struct RotationChunkCoeffs {
