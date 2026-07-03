@@ -224,6 +224,39 @@ Backward rotation 曾多轮调试。关键数据如下，单位 ms：
 - two-wire cell 的收益来自减少同步、shared-memory round trip、block reduction 与 atomicAdd，而不是把两个门硬做成 generic dense 4x4。
 - 对 `current` 和 `lambda` 的 CNOT 尝试过双 statevector 合并 kernel，但 24x1 退化，说明少一次 launch 不一定抵得过更重的内存事务。
 
+### Rotation chunk 分段策略消融
+
+上一节说明了 backward kernel 本身的优化路径；这里单独看分段策略。最终方案不是简单地“chunk 越宽越好”，而是按 statevector layout 做 hybrid：低位保留 W8，20 qubit 以上的高位拆成 W2/W4，并在 backward 中使用 cell/transposed 变体。
+
+同一批最终 stage profile 中，`w1` 表示只做 per-wire `RY+RZ` fusion 和 ring-CNOT fusion，不做 rotation layer chunk。`w8` 表示当前默认 hybrid 策略：
+
+| case | w1 total | w8 total | w1 / w8 | w1 backward | w8 backward | backward ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| 8x8 | 0.546 | 0.413 | 1.32x | 0.440 | 0.310 | 1.42x |
+| 12x8 | 1.125 | 0.600 | 1.87x | 0.981 | 0.457 | 2.15x |
+| 16x4 | 0.817 | 0.598 | 1.37x | 0.665 | 0.444 | 1.50x |
+| 20x2 | 6.402 | 3.699 | 1.73x | 5.105 | 2.687 | 1.90x |
+| 24x1 | 60.816 | 33.711 | 1.80x | 49.418 | 22.366 | 2.21x |
+
+这说明完全退回 per-wire 虽然已经比门级 baseline 快很多，但 backward 会在所有规模上留下明显开销；rotation chunk 不是只对大规模有用。
+
+历史 A/B 还验证了几个看上去合理但不够稳的替代方案：
+
+| alternative | 20x2 total | 20x2 backward | 24x1 total | 24x1 backward | 问题 |
+|---|---:|---:|---:|---:|---|
+| all-W4 / 低位也拆窄 | 4.263 | 3.319 | 43.553 | 32.246 | 高位访存改善了，但低位连续 tile 的 W8 融合收益被放弃 |
+| scalar + pair512 W8 | 4.762 | 3.816 | 44.871 | 33.560 | 对高位仍偏宽，stride 访存和同步成本重 |
+| high transposed W4 + low pair512 W8 | 3.707 | 2.823 | 41.156 | 29.848 | 高位拆分有效，但低位 W8 backward 仍有 shared-memory round trip |
+| W4 cell2 + low pair512 W8 | 3.706 | 2.764 | 37.277 | 25.977 | 高位 cell2 有效，但低位 pair512 仍未消掉两门之间的同步 |
+| final W4 cell2 + W8 cell2 | 3.699 | 2.687 | 33.711 | 22.366 | 当前默认 |
+
+这些消融支持当前分段策略：
+
+- 低位不宜过度拆窄。低位 tile 在 global memory 中连续，W8 能把多次读写和 kernel launch 合并掉；all-W4 在大规模下比最终方案慢约 29% total / 44% backward。
+- 高位不宜继续使用宽 W8。高位 chunk 的地址形态由 `base | (local_index << chunk_start)` 决定，`chunk_start` 大时 warp 内访问跨度变大；拆成 W2/W4 后，虽然 kernel 次数增加，但访存形态和 tile 内同步压力更合理。
+- 只追求减少 launch 不可靠。双 statevector CNOT 合并、过宽 pair512 等尝试都显示，少一个 kernel launch 可能换来更重的内存事务、shared-memory 压力或同步成本。
+- 最终方案在小规模没有明显退化，在 20x2/24x1 的 backward 热点上收益最大；这符合目标：作为通用 adjoint diff 路径，不追求单一设备上的极限特化，而是避免某一类规模明显掉队。
+
 ### Nsight Compute 指标
 
 24x1 最终策略的 kernel group 汇总：
