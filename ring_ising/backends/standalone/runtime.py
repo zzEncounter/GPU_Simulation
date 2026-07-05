@@ -17,8 +17,7 @@ class RingIsingAdjointBackend:
         self.config = config
         self.gradient_strategy = config.normalized_gradient_strategy
         self.uses_pennylane_gate_structure = self.gradient_strategy in {
-            "inverse_walk",
-            "ryrz_fused",
+            "inverse_walk_cuQuantum",
             "structured_adjoint",
         }
         self.estimated_workspace_gib = config.estimated_gradient_workspace_gib_for(

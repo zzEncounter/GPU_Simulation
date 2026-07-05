@@ -8,6 +8,7 @@
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <custatevec.h>
 #include <thrust/complex.h>
 
 namespace standalone_backend {
@@ -39,6 +40,7 @@ enum class RotationChunkKernelPreference : int {
 
 void check_cuda(cudaError_t status, const char *context);
 void check_cublas(cublasStatus_t status, const char *context);
+void check_custatevec(custatevecStatus_t status, const char *context);
 void maybe_synchronize_cuda(const char *context);
 
 template <typename T> class DeviceBuffer {
@@ -124,6 +126,14 @@ void launch_inverse_walk_ry_step(Complex *current, Complex *lambda,
 void launch_inverse_walk_rz_step(Complex *current, Complex *lambda,
                                  std::size_t size, std::size_t wire,
                                  double theta, double *out_gradient);
+void launch_inverse_walk_ry_gradient(const Complex *current,
+                                     const Complex *lambda, std::size_t size,
+                                     std::size_t wire, double theta,
+                                     double *out_gradient);
+void launch_inverse_walk_rz_gradient(const Complex *current,
+                                     const Complex *lambda, std::size_t size,
+                                     std::size_t wire, double theta,
+                                     double *out_gradient);
 void launch_inverse_walk_ryrz_step(Complex *current, Complex *lambda,
                                    std::size_t size, std::size_t wire,
                                    double theta_ry, double theta_rz,

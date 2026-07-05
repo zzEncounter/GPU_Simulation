@@ -53,6 +53,7 @@ auto run_energy_and_grad_baseline(RingIsingCudaBackend::Impl &impl,
                                   bool compute_gradient,
                                   bool profile) -> EnergyGradResult {
     if (impl.strategy == GradientStrategy::InverseWalk ||
+        impl.strategy == GradientStrategy::InverseWalkCuQuantum ||
         impl.strategy == GradientStrategy::RyrzFused) {
         return run_energy_and_grad_gate_level_adjoint(
             impl, params, num_params, compute_gradient, profile);

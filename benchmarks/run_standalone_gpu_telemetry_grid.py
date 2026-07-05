@@ -32,8 +32,7 @@ from ring_ising.runtime._nvidia_smi import (
 
 
 MODES = (
-    "inverse_walk",
-    "ryrz_fused",
+    "inverse_walk_cuQuantum",
     "structured_adjoint",
     "dense_scan",
 )
@@ -1058,7 +1057,7 @@ def mode_specs(
 ) -> list[tuple[str, str, int]]:
     specs: list[tuple[str, str, int]] = []
     for mode in modes:
-        if mode in {"structured_adjoint", "mode2"}:
+        if mode == "structured_adjoint":
             specs.extend(
                 (f"structured_w{width}", "structured_adjoint", width)
                 for width in structured_widths

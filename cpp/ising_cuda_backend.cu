@@ -107,6 +107,7 @@ auto gpu_stage(StageProfiler &profiler, const char *name, Func &&func)
 
 enum class GradientStrategy {
     InverseWalk,
+    InverseWalkCuQuantum,
     RyrzFused,
     StructuredAdjoint,
     DenseScan
@@ -246,22 +247,19 @@ void validate_num_params(std::size_t expected_params, std::size_t num_params) {
 
 auto parse_gradient_strategy(const std::string &strategy)
     -> GradientStrategy {
-    if (strategy == "inverse_walk") {
-        return GradientStrategy::InverseWalk;
+    if (strategy == "inverse_walk_cuQuantum" ||
+        strategy == "inverse_walk_cuquantum") {
+        return GradientStrategy::InverseWalkCuQuantum;
     }
-    if (strategy == "ryrz_fused") {
-        return GradientStrategy::RyrzFused;
-    }
-    if (strategy == "structured_adjoint" || strategy == "mode2") {
+    if (strategy == "structured_adjoint") {
         return GradientStrategy::StructuredAdjoint;
     }
     if (strategy == "dense_scan") {
         return GradientStrategy::DenseScan;
     }
     throw std::invalid_argument(
-        "Unknown gradient strategy. Expected one of: inverse_walk, "
-        "structured_adjoint, dense_scan. Experimental aliases: ryrz_fused, "
-        "mode2.");
+        "Unknown gradient strategy. Expected one of: inverse_walk_cuQuantum, "
+        "structured_adjoint, dense_scan.");
 }
 
 struct CublasHandle {
@@ -284,6 +282,27 @@ struct CublasHandle {
     ~CublasHandle() {
         if (handle != nullptr) {
             cublasDestroy(handle);
+        }
+    }
+};
+
+struct CustatevecHandle {
+    custatevecHandle_t handle{nullptr};
+
+    CustatevecHandle() {
+        detail::check_custatevec(custatevecCreate(&handle), "custatevecCreate");
+    }
+
+    CustatevecHandle(const CustatevecHandle &) = delete;
+    auto operator=(const CustatevecHandle &) -> CustatevecHandle & = delete;
+
+    CustatevecHandle(CustatevecHandle &&other) noexcept : handle(other.handle) {
+        other.handle = nullptr;
+    }
+
+    ~CustatevecHandle() {
+        if (handle != nullptr) {
+            custatevecDestroy(handle);
         }
     }
 };
@@ -324,6 +343,10 @@ struct RingIsingCudaBackend::Impl {
     DeviceBuffer<Complex> scratch;
     DeviceBuffer<Complex> cnot_scratch;
     DeviceBuffer<double> gate_level_gradients;
+    std::unique_ptr<CustatevecHandle> custatevec;
+    DeviceBuffer<std::uint8_t> custatevec_workspace;
+    std::size_t custatevec_cnot_workspace_size{0};
+    bool custatevec_cnot_workspace_size_cached{false};
     std::unique_ptr<CublasHandle> dense_cublas;
     DeviceBuffer<Complex> dense_gate_mats;
     DeviceBuffer<Complex> dense_hamiltonian;

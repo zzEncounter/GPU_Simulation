@@ -2,4 +2,5 @@ pennylane>=0.42.3,<0.43; python_version < "3.11"
 pennylane>=0.44,<0.45; python_version >= "3.11"
 pennylane-lightning-gpu>=0.42,<0.43; python_version < "3.11" and platform_system == "Linux"
 pennylane-lightning-gpu>=0.44,<0.45; python_version >= "3.11" and platform_system == "Linux"
+custatevec-cu12>=1.13,<2; platform_system == "Linux"
 pybind11>=3,<4

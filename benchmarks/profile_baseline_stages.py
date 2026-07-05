@@ -128,7 +128,7 @@ def main() -> None:
             init_scale=args.init_scale,
         )
         print(f"{case.num_qubits} qubits x {case.layers} layers")
-        mode_specs = [("inverse_walk", "inverse_walk", 1)]
+        mode_specs = [("inverse_walk_cuQuantum", "inverse_walk_cuQuantum", 1)]
         mode_specs.extend(
             (f"structured_w{width}", "structured_adjoint", width)
             for width in args.structured_widths

@@ -20,19 +20,19 @@ CASES = (
 )
 SEEDS = (123, 321, 2026)
 MODES = (
-    "inverse_walk",
-    "ryrz_fused",
+    "inverse_walk_cuQuantum",
     "structured_adjoint",
     "dense_scan",
 )
 TOLERANCES = {
-    "inverse_walk": {"energy_atol": 1e-9, "grad_atol": 1e-8},
-    "ryrz_fused": {"energy_atol": 1e-9, "grad_atol": 1e-8},
+    "inverse_walk_cuQuantum": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "structured_adjoint": {"energy_atol": 1e-9, "grad_atol": 1e-8},
-    "mode2": {"energy_atol": 1e-9, "grad_atol": 1e-8},
     "dense_scan": {"energy_atol": 1e-8, "grad_atol": 1e-7},
 }
 REMOVED_MODES = (
+    "inverse_walk",
+    "ryrz_fused",
+    "mode2",
     "save_param_states",
     "checkpoint",
     "block_fused_adjoint",
@@ -127,18 +127,18 @@ class StandaloneBackendParityTest(unittest.TestCase):
                             rtol=tolerances["grad_atol"],
                         )
 
-    def test_gate_level_and_structured_variants_match_beyond_small_reference_cases(self) -> None:
+    def test_cuquantum_and_structured_match_beyond_small_reference_cases(self) -> None:
         num_qubits = 8
         field = 0.9
         params = self._make_params(seed=2028, num_qubits=num_qubits)
 
         reference_energy, reference_grad = self._standalone_result(
-            mode="inverse_walk",
+            mode="structured_adjoint",
             num_qubits=num_qubits,
             field=field,
             params=params,
         )
-        for mode in ("ryrz_fused", "structured_adjoint", "mode2"):
+        for mode in ("inverse_walk_cuQuantum", "structured_adjoint"):
             with self.subTest(mode=mode):
                 energy, grad = self._standalone_result(
                     mode=mode,
@@ -193,27 +193,6 @@ class StandaloneBackendParityTest(unittest.TestCase):
                     atol=TOLERANCES["structured_adjoint"]["grad_atol"],
                     rtol=TOLERANCES["structured_adjoint"]["grad_atol"],
                 )
-
-    def test_mode2_alias_matches_structured_adjoint(self) -> None:
-        num_qubits = 8
-        field = 0.9
-        params = self._make_params(seed=2031, num_qubits=num_qubits)
-        reference_energy, reference_grad = self._standalone_result(
-            mode="structured_adjoint",
-            num_qubits=num_qubits,
-            field=field,
-            params=params,
-            structured_width=4,
-        )
-        energy, grad = self._standalone_result(
-            mode="mode2",
-            num_qubits=num_qubits,
-            field=field,
-            params=params,
-            structured_width=4,
-        )
-        np.testing.assert_allclose(energy, reference_energy, atol=1e-9, rtol=1e-9)
-        np.testing.assert_allclose(grad, reference_grad, atol=1e-8, rtol=1e-8)
 
     def test_dense_scan_matches_structured_for_deeper_small_qubit_circuit(
         self,
