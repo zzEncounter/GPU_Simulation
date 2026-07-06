@@ -48,6 +48,12 @@ struct ConjugateProduct {
     }
 };
 
+struct RealPart {
+    __host__ __device__ auto operator()(const Complex &value) const -> double {
+        return value.real();
+    }
+};
+
 __global__ void init_zero_state_kernel(Complex *state, std::size_t size) {
     const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
                                                 threadIdx.x);
@@ -201,6 +207,22 @@ __global__ void apply_ring_cnot_layer_kernel(Complex *out, const Complex *in,
     out[transformed] = in[index];
 }
 
+__global__ void apply_ring_cnot_layer_gather_kernel(Complex *out,
+                                                    const Complex *in,
+                                                    std::size_t size,
+                                                    std::size_t num_qubits,
+                                                    bool inverse) {
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= size) {
+        return;
+    }
+
+    const auto source =
+        ring_cnot_layer_transformed_index(index, num_qubits, !inverse);
+    out[index] = in[source];
+}
+
 template <bool Inverse>
 __global__ void apply_ryrz_kernel(Complex *state, std::size_t size,
                                   std::size_t wire, double c, double s,
@@ -276,6 +298,53 @@ __global__ void apply_ring_ising_hamiltonian_kernel(Complex *out,
     out[index] = value;
 }
 
+__global__ void apply_ring_ising_hamiltonian_energy_partials_kernel(
+    Complex *out, const Complex *state, Complex *energy_partials,
+    std::size_t size, std::size_t num_qubits, double field) {
+    __shared__ double energy_partial[THREADS];
+
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    double contribution = 0.0;
+
+    if (index < size) {
+        const auto mask = (std::size_t{1} << num_qubits) - 1;
+        const auto rotated =
+            ((index << 1U) & mask) | (index >> (num_qubits - 1U));
+        const auto domain_walls = __popcll(
+            static_cast<unsigned long long>((index ^ rotated) & mask));
+        const double diag_coeff =
+            static_cast<double>(2 * domain_walls) -
+            static_cast<double>(num_qubits);
+
+        const Complex amplitude = state[index];
+        Complex value = Complex(diag_coeff, 0.0) * amplitude;
+        for (std::size_t wire = 0; wire < num_qubits; wire++) {
+            const auto flipped = index ^ (std::size_t{1} << wire);
+            value += Complex(-field, 0.0) * state[flipped];
+        }
+        out[index] = value;
+
+        contribution =
+            amplitude.real() * value.real() + amplitude.imag() * value.imag();
+    }
+
+    energy_partial[threadIdx.x] = contribution;
+    __syncthreads();
+
+    for (int stride = THREADS / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            energy_partial[threadIdx.x] +=
+                energy_partial[threadIdx.x + stride];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        energy_partials[blockIdx.x] = Complex(energy_partial[0], 0.0);
+    }
+}
+
 void launch_init_zero_state(Complex *state, std::size_t size) {
     const auto blocks = static_cast<int>((size + THREADS - 1) / THREADS);
     init_zero_state_kernel<<<blocks, THREADS>>>(state, size);
@@ -327,16 +396,24 @@ void launch_apply_cnot(Complex *state, std::size_t size, std::size_t control,
 
 void launch_apply_ring_cnot_layer(Complex *out, const Complex *in,
                                   std::size_t size, std::size_t num_qubits,
-                                  bool inverse) {
+                                  bool inverse, cudaStream_t stream) {
     const auto blocks = static_cast<int>((size + THREADS - 1) / THREADS);
-    apply_ring_cnot_layer_kernel<<<blocks, THREADS>>>(out, in, size,
-                                                      num_qubits, inverse);
+    if (inverse) {
+        apply_ring_cnot_layer_gather_kernel<<<blocks, THREADS, 0, stream>>>(
+            out, in, size, num_qubits, inverse);
+        check_cuda(cudaGetLastError(), "apply_ring_cnot_layer_gather_kernel");
+        maybe_synchronize_cuda("apply_ring_cnot_layer_gather_kernel sync");
+        return;
+    }
+    apply_ring_cnot_layer_kernel<<<blocks, THREADS, 0, stream>>>(
+        out, in, size, num_qubits, inverse);
     check_cuda(cudaGetLastError(), "apply_ring_cnot_layer_kernel");
     maybe_synchronize_cuda("apply_ring_cnot_layer_kernel sync");
 }
 
 void launch_apply_ryrz(Complex *state, std::size_t size, std::size_t wire,
-                       double theta_ry, double theta_rz, bool inverse) {
+                       double theta_ry, double theta_rz, bool inverse,
+                       cudaStream_t stream) {
     const auto pairs = size / 2;
     const auto blocks = static_cast<int>((pairs + THREADS - 1) / THREADS);
     const double half_theta = theta_ry * 0.5;
@@ -346,10 +423,10 @@ void launch_apply_ryrz(Complex *state, std::size_t size, std::size_t wire,
     const double cos_half = std::cos(half_phi);
     const double sin_half = std::sin(half_phi);
     if (inverse) {
-        apply_ryrz_kernel<true><<<blocks, THREADS>>>(
+        apply_ryrz_kernel<true><<<blocks, THREADS, 0, stream>>>(
             state, size, wire, c, s, cos_half, sin_half);
     } else {
-        apply_ryrz_kernel<false><<<blocks, THREADS>>>(
+        apply_ryrz_kernel<false><<<blocks, THREADS, 0, stream>>>(
             state, size, wire, c, s, cos_half, sin_half);
     }
     check_cuda(cudaGetLastError(), "apply_ryrz_kernel");
@@ -366,6 +443,22 @@ void launch_apply_hamiltonian(Complex *out, const Complex *state,
     maybe_synchronize_cuda("apply_ring_ising_hamiltonian_kernel sync");
 }
 
+auto hamiltonian_energy_partial_count(std::size_t size) -> std::size_t {
+    return (size + THREADS - 1) / THREADS;
+}
+
+void launch_apply_hamiltonian_energy_partials(
+    Complex *out, const Complex *state, Complex *energy_partials,
+    std::size_t size, std::size_t num_qubits, double field) {
+    const auto blocks = static_cast<int>(hamiltonian_energy_partial_count(size));
+    apply_ring_ising_hamiltonian_energy_partials_kernel<<<blocks, THREADS>>>(
+        out, state, energy_partials, size, num_qubits, field);
+    check_cuda(cudaGetLastError(),
+               "apply_ring_ising_hamiltonian_energy_partials_kernel");
+    maybe_synchronize_cuda(
+        "apply_ring_ising_hamiltonian_energy_partials_kernel sync");
+}
+
 auto complex_inner_product(const Complex *lhs, const Complex *rhs,
                            std::size_t size) -> Complex {
     auto lhs_ptr = thrust::device_pointer_cast(lhs);
@@ -376,6 +469,12 @@ auto complex_inner_product(const Complex *lhs, const Complex *rhs,
     return thrust::transform_reduce(first, last, ConjugateProduct{},
                                     Complex(0.0, 0.0),
                                     cuda::std::plus<Complex>());
+}
+
+auto sum_real_parts(const Complex *values, std::size_t size) -> double {
+    auto values_ptr = thrust::device_pointer_cast(values);
+    return thrust::transform_reduce(values_ptr, values_ptr + size, RealPart{},
+                                    0.0, cuda::std::plus<double>());
 }
 
 } // namespace detail

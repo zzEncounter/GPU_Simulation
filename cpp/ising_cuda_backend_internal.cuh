@@ -37,6 +37,8 @@ enum class RotationChunkKernelPreference : int {
     Register
 };
 
+constexpr std::size_t PRODUCT_STATE_INIT_MAX_QUBITS = 32;
+
 void check_cuda(cudaError_t status, const char *context);
 void check_cublas(cublasStatus_t status, const char *context);
 void maybe_synchronize_cuda(const char *context);
@@ -107,17 +109,22 @@ void launch_apply_cnot(Complex *state, std::size_t size, std::size_t control,
                        std::size_t target);
 void launch_apply_ring_cnot_layer(Complex *out, const Complex *in,
                                   std::size_t size, std::size_t num_qubits,
-                                  bool inverse);
+                                  bool inverse, cudaStream_t stream = 0);
 void launch_apply_ryrz(Complex *state, std::size_t size, std::size_t wire,
                        double theta_ry, double theta_rz,
-                       bool inverse = false);
+                       bool inverse = false, cudaStream_t stream = 0);
+void launch_init_ryrz_product_state(Complex *state, std::size_t size,
+                                    std::size_t num_qubits,
+                                    const double *layer_params,
+                                    cudaStream_t stream = 0);
 void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
                                       std::size_t chunk_start,
                                       std::size_t chunk_width,
                                       const double *theta_ry,
                                       const double *theta_rz,
                                       RotationChunkKernelPreference
-                                          kernel_preference);
+                                          kernel_preference,
+                                      cudaStream_t stream = 0);
 void launch_inverse_walk_ry_step(Complex *current, Complex *lambda,
                                  std::size_t size, std::size_t wire,
                                  double theta, double *out_gradient);
@@ -133,15 +140,25 @@ void launch_inverse_walk_ryrz_rotation_chunk(
     Complex *current, Complex *lambda, std::size_t size,
     std::size_t chunk_start, std::size_t chunk_width,
     const double *theta_ry, const double *theta_rz, double *out_gradients);
+void launch_inverse_ring_cnot_then_w4_rotation_chunk(
+    const Complex *current_in, const Complex *lambda_in, Complex *current_out,
+    Complex *lambda_out, std::size_t size, std::size_t num_qubits,
+    std::size_t chunk_start, const double *theta_ry, const double *theta_rz,
+    double *out_gradients);
 void launch_inverse_walk_cnot_step(Complex *current, Complex *lambda,
                                    std::size_t size, std::size_t control,
                                    std::size_t target);
 void launch_apply_hamiltonian(Complex *out, const Complex *state,
                               std::size_t size, std::size_t num_qubits,
                               double field);
+auto hamiltonian_energy_partial_count(std::size_t size) -> std::size_t;
+void launch_apply_hamiltonian_energy_partials(
+    Complex *out, const Complex *state, Complex *energy_partials,
+    std::size_t size, std::size_t num_qubits, double field);
 
 auto complex_inner_product(const Complex *lhs, const Complex *rhs,
                            std::size_t size) -> Complex;
+auto sum_real_parts(const Complex *values, std::size_t size) -> double;
 
 void launch_fill_identity_matrices(Complex *mats, std::size_t batch,
                                    std::size_t dim);

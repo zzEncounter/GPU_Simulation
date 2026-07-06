@@ -9,6 +9,12 @@ struct StructuredForwardRotationChunk {
         detail::RotationChunkKernelPreference::Cooperative};
 };
 
+auto structured_uses_product_state_init(
+    const RingIsingCudaBackend::Impl &impl) -> bool {
+    return impl.num_layers > 0 &&
+           impl.num_qubits <= detail::PRODUCT_STATE_INIT_MAX_QUBITS;
+}
+
 auto build_structured_forward_rotation_chunks(
     const RingIsingCudaBackend::Impl &impl)
     -> std::vector<StructuredForwardRotationChunk> {
@@ -87,24 +93,38 @@ void launch_structured_forward_rotation_chunk(
     Complex *state, std::size_t state_size, StructuredRotationChunk chunk,
     const std::array<double, STRUCTURED_ROTATION_CHUNK_WIRES> &theta_ry,
     const std::array<double, STRUCTURED_ROTATION_CHUNK_WIRES> &theta_rz,
-    detail::RotationChunkKernelPreference kernel_preference) {
+    detail::RotationChunkKernelPreference kernel_preference,
+    cudaStream_t stream = 0) {
     if (chunk.width == 1) {
         detail::launch_apply_ryrz(state, state_size, chunk.start, theta_ry[0],
-                                  theta_rz[0]);
+                                  theta_rz[0], false, stream);
         return;
     }
     detail::launch_apply_ryrz_rotation_chunk(
         state, state_size, chunk.start, chunk.width, theta_ry.data(),
-        theta_rz.data(), kernel_preference);
+        theta_rz.data(), kernel_preference, stream);
 }
 
 void apply_structured_forward_layers(
     RingIsingCudaBackend::Impl &impl, const double *params,
-    const std::vector<StructuredForwardRotationChunk> &rotation_chunks) {
+    const std::vector<StructuredForwardRotationChunk> &rotation_chunks,
+    cudaStream_t stream = 0) {
     auto *state = impl.current.get();
     auto *next = impl.scratch.get();
 
-    for (std::size_t layer = 0; layer < impl.num_layers; layer++) {
+    std::size_t first_standard_layer = 0;
+    if (structured_uses_product_state_init(impl)) {
+        detail::launch_init_ryrz_product_state(state, impl.state_size,
+                                               impl.num_qubits, params,
+                                               stream);
+        detail::launch_apply_ring_cnot_layer(next, state, impl.state_size,
+                                             impl.num_qubits, false, stream);
+        std::swap(state, next);
+        first_standard_layer = 1;
+    }
+
+    for (std::size_t layer = first_standard_layer; layer < impl.num_layers;
+         layer++) {
         for (const auto forward_chunk : rotation_chunks) {
             const auto chunk = forward_chunk.chunk;
             std::array<double, STRUCTURED_ROTATION_CHUNK_WIRES> theta_ry{};
@@ -113,16 +133,17 @@ void apply_structured_forward_layers(
                                             theta_ry, theta_rz);
             launch_structured_forward_rotation_chunk(
                 state, impl.state_size, chunk, theta_ry, theta_rz,
-                forward_chunk.kernel_preference);
+                forward_chunk.kernel_preference, stream);
         }
 
         detail::launch_apply_ring_cnot_layer(next, state, impl.state_size,
-                                             impl.num_qubits, false);
+                                             impl.num_qubits, false, stream);
         std::swap(state, next);
     }
 
     if (state != impl.current.get()) {
-        copy_device_buffer(impl.current.get(), state, impl.state_size);
+        copy_device_buffer(impl.current.get(), state, impl.state_size,
+                           stream);
     }
 }
 
@@ -156,9 +177,8 @@ void launch_structured_backward_ryrz_chunk(RingIsingCudaBackend::Impl &impl,
         impl.gate_level_gradients.get() + base);
 }
 
-void run_structured_backward_rotation_layer(
-    RingIsingCudaBackend::Impl &impl, Complex *current, Complex *lambda,
-    const double *params, std::size_t layer) {
+auto structured_effective_backward_chunk_width(
+    const RingIsingCudaBackend::Impl &impl) -> std::size_t {
     auto requested_chunk_width =
         std::min<std::size_t>(impl.structured_rotation_chunk_width,
                               STRUCTURED_ROTATION_CHUNK_WIRES);
@@ -170,13 +190,20 @@ void run_structured_backward_rotation_layer(
         impl.num_qubits >= 16) {
         requested_chunk_width = 1;
     }
+    return requested_chunk_width;
+}
 
+void run_structured_backward_rotation_layer(
+    RingIsingCudaBackend::Impl &impl, Complex *current, Complex *lambda,
+    const double *params, std::size_t layer, std::size_t initial_wire) {
+    const auto requested_chunk_width =
+        structured_effective_backward_chunk_width(impl);
     auto launch_chunk = [&](StructuredRotationChunk chunk) {
         launch_structured_backward_ryrz_chunk(impl, current, lambda, params,
                                               layer, chunk);
     };
 
-    std::size_t wire = impl.num_qubits;
+    std::size_t wire = initial_wire;
     if (requested_chunk_width >= 8 && impl.num_qubits >= 20) {
         while (wire > 8) {
             const auto chunk_width = std::min<std::size_t>(4, wire - 8);
@@ -204,6 +231,36 @@ void run_structured_backward_rotation_layer(
     }
 }
 
+auto try_launch_fused_inverse_cnot_first_backward_chunk(
+    RingIsingCudaBackend::Impl &impl, const double *params, std::size_t layer,
+    const Complex *current, const Complex *lambda, Complex *next_current,
+    Complex *next_lambda, std::size_t *remaining_wire) -> bool {
+    const auto requested_chunk_width =
+        structured_effective_backward_chunk_width(impl);
+    if (requested_chunk_width < 8 || impl.num_qubits < 20) {
+        return false;
+    }
+
+    const auto chunk_width = std::min<std::size_t>(4, impl.num_qubits - 8);
+    if (chunk_width != 4) {
+        return false;
+    }
+
+    const auto chunk_start = impl.num_qubits - chunk_width;
+    std::array<double, STRUCTURED_ROTATION_CHUNK_WIRES> theta_ry{};
+    std::array<double, STRUCTURED_ROTATION_CHUNK_WIRES> theta_rz{};
+    load_structured_rotation_params(impl, params, layer,
+                                    {chunk_start, chunk_width}, theta_ry,
+                                    theta_rz);
+    const auto base = structured_param_base(impl, layer, chunk_start);
+    detail::launch_inverse_ring_cnot_then_w4_rotation_chunk(
+        current, lambda, next_current, next_lambda, impl.state_size,
+        impl.num_qubits, chunk_start, theta_ry.data(), theta_rz.data(),
+        impl.gate_level_gradients.get() + base);
+    *remaining_wire = chunk_start;
+    return true;
+}
+
 void run_structured_backward_sweep(RingIsingCudaBackend::Impl &impl,
                                    const double *params) {
     auto *current = impl.current.get();
@@ -212,17 +269,25 @@ void run_structured_backward_sweep(RingIsingCudaBackend::Impl &impl,
     auto *next_lambda = impl.cnot_scratch.get();
 
     for (std::size_t layer = impl.num_layers; layer-- > 0;) {
-        detail::launch_apply_ring_cnot_layer(next_current, current,
-                                             impl.state_size, impl.num_qubits,
-                                             true);
-        detail::launch_apply_ring_cnot_layer(next_lambda, lambda,
-                                             impl.state_size, impl.num_qubits,
-                                             true);
-        std::swap(current, next_current);
-        std::swap(lambda, next_lambda);
+        std::size_t remaining_wire = impl.num_qubits;
+        if (try_launch_fused_inverse_cnot_first_backward_chunk(
+                impl, params, layer, current, lambda, next_current,
+                next_lambda, &remaining_wire)) {
+            std::swap(current, next_current);
+            std::swap(lambda, next_lambda);
+        } else {
+            detail::launch_apply_ring_cnot_layer(next_current, current,
+                                                 impl.state_size,
+                                                 impl.num_qubits, true);
+            detail::launch_apply_ring_cnot_layer(next_lambda, lambda,
+                                                 impl.state_size,
+                                                 impl.num_qubits, true);
+            std::swap(current, next_current);
+            std::swap(lambda, next_lambda);
+        }
 
         run_structured_backward_rotation_layer(impl, current, lambda, params,
-                                               layer);
+                                               layer, remaining_wire);
     }
 
     if (current != impl.current.get()) {
@@ -249,24 +314,27 @@ auto run_energy_and_grad_structured_adjoint(RingIsingCudaBackend::Impl &impl,
         });
 
     gpu_stage(profiler, "zero_state_ms", [&]() {
-        detail::launch_init_zero_state(impl.current.get(), impl.state_size);
+        if (!structured_uses_product_state_init(impl)) {
+            detail::launch_init_zero_state(impl.current.get(), impl.state_size);
+        }
     });
     gpu_stage(profiler, "forward_apply_ms", [&]() {
         apply_structured_forward_layers(impl, params, forward_rotation_chunks);
     });
+    const auto energy_partial_count =
+        detail::hamiltonian_energy_partial_count(impl.state_size);
     gpu_stage(profiler, "hamiltonian_ms", [&]() {
-        detail::launch_apply_hamiltonian(impl.lambda.get(), impl.current.get(),
-                                         impl.state_size, impl.num_qubits,
-                                         impl.field);
+        detail::launch_apply_hamiltonian_energy_partials(
+            impl.lambda.get(), impl.current.get(), impl.scratch.get(),
+            impl.state_size, impl.num_qubits, impl.field);
     });
 
     EnergyGradResult result;
     result.energy = gpu_stage(
         profiler, "energy_dot_ms",
         [&]() {
-            return detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
-                                                 impl.state_size)
-                .real();
+            return detail::sum_real_parts(impl.scratch.get(),
+                                          energy_partial_count);
         });
 
     if (!compute_gradient) {

@@ -184,9 +184,10 @@ auto build_ops_for_strategy(std::size_t num_qubits, std::size_t num_layers,
     return build_pennylane_gate_level_ops(num_qubits, num_layers, params);
 }
 
-void copy_device_buffer(Complex *dst, const Complex *src, std::size_t size) {
+void copy_device_buffer(Complex *dst, const Complex *src, std::size_t size,
+                        cudaStream_t stream = 0) {
     detail::check_cuda(cudaMemcpyAsync(dst, src, sizeof(Complex) * size,
-                                       cudaMemcpyDeviceToDevice, 0),
+                                       cudaMemcpyDeviceToDevice, stream),
                        "cudaMemcpyAsyncDeviceToDevice");
 }
 
@@ -408,6 +409,105 @@ auto RingIsingCudaBackend::energy_and_grad(const double *params,
     }
     return run_energy_and_grad_baseline(*impl_, params, num_params,
                                         compute_gradient, profile);
+}
+
+auto RingIsingCudaBackend::benchmark_structured_forward_graph(
+    const double *params, std::size_t num_params, std::size_t repeats)
+    -> CudaGraphBenchmarkResult {
+    validate_num_params(impl_->expected_params, num_params);
+    if (!is_structured_adjoint_family(impl_->strategy)) {
+        throw std::invalid_argument(
+            "CUDA graph forward benchmark requires structured_adjoint.");
+    }
+    if (!structured_uses_product_state_init(*impl_)) {
+        throw std::invalid_argument(
+            "CUDA graph forward benchmark currently requires product-state "
+            "structured initialization.");
+    }
+    if (repeats == 0) {
+        throw std::invalid_argument("repeats must be at least 1.");
+    }
+
+    const auto forward_rotation_chunks =
+        build_structured_forward_rotation_chunks(*impl_);
+    cudaStream_t graph_stream{nullptr};
+    detail::check_cuda(
+        cudaStreamCreateWithFlags(&graph_stream, cudaStreamNonBlocking),
+        "cudaStreamCreateWithFlags structured forward graph");
+
+    auto run_forward = [&](cudaStream_t stream) {
+        if (!structured_uses_product_state_init(*impl_)) {
+            detail::launch_init_zero_state(impl_->current.get(),
+                                           impl_->state_size);
+        }
+        apply_structured_forward_layers(*impl_, params,
+                                        forward_rotation_chunks, stream);
+    };
+
+    detail::check_cuda(cudaDeviceSynchronize(),
+                       "benchmark_structured_forward_graph pre-sync");
+
+    cudaEvent_t start{nullptr};
+    cudaEvent_t stop{nullptr};
+    detail::check_cuda(cudaEventCreate(&start),
+                       "cudaEventCreate graph benchmark start");
+    detail::check_cuda(cudaEventCreate(&stop),
+                       "cudaEventCreate graph benchmark stop");
+
+    run_forward(graph_stream);
+    detail::check_cuda(cudaStreamSynchronize(graph_stream),
+                       "benchmark_structured_forward_graph warmup sync");
+    auto measure_stream_ms = [&](auto &&body) {
+        detail::check_cuda(cudaEventRecord(start, graph_stream),
+                           "cudaEventRecord graph benchmark start");
+        for (std::size_t repeat = 0; repeat < repeats; repeat++) {
+            body();
+        }
+        detail::check_cuda(cudaEventRecord(stop, graph_stream),
+                           "cudaEventRecord graph benchmark stop");
+        detail::check_cuda(cudaEventSynchronize(stop),
+                           "cudaEventSynchronize graph benchmark stop");
+        float elapsed_ms = 0.0F;
+        detail::check_cuda(cudaEventElapsedTime(&elapsed_ms, start, stop),
+                           "cudaEventElapsedTime graph benchmark");
+        return static_cast<double>(elapsed_ms) /
+               static_cast<double>(repeats);
+    };
+    const double normal_ms =
+        measure_stream_ms([&]() { run_forward(graph_stream); });
+
+    cudaGraph_t graph{nullptr};
+    cudaGraphExec_t graph_exec{nullptr};
+    detail::check_cuda(
+        cudaStreamBeginCapture(graph_stream, cudaStreamCaptureModeRelaxed),
+        "cudaStreamBeginCapture structured forward graph");
+    run_forward(graph_stream);
+    detail::check_cuda(cudaStreamEndCapture(graph_stream, &graph),
+                       "cudaStreamEndCapture structured forward graph");
+    detail::check_cuda(cudaGraphInstantiate(&graph_exec, graph, nullptr,
+                                            nullptr, 0),
+                       "cudaGraphInstantiate structured forward graph");
+
+    detail::check_cuda(cudaGraphLaunch(graph_exec, graph_stream),
+                       "cudaGraphLaunch structured forward graph warmup");
+    detail::check_cuda(cudaStreamSynchronize(graph_stream),
+                       "structured forward graph warmup sync");
+    const double graph_ms = measure_stream_ms([&]() {
+        detail::check_cuda(cudaGraphLaunch(graph_exec, graph_stream),
+                           "cudaGraphLaunch structured forward graph");
+    });
+
+    if (graph_exec != nullptr) {
+        cudaGraphExecDestroy(graph_exec);
+    }
+    if (graph != nullptr) {
+        cudaGraphDestroy(graph);
+    }
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaStreamDestroy(graph_stream);
+
+    return {normal_ms, graph_ms};
 }
 
 EnergyGradResult energy_and_grad(std::size_t num_qubits,

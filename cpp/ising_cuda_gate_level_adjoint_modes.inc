@@ -60,19 +60,20 @@ auto run_energy_and_grad_gate_level_adjoint(RingIsingCudaBackend::Impl &impl,
             apply_op_inplace(impl.current.get(), impl.state_size, op, false);
         }
     });
+    const auto energy_partial_count =
+        detail::hamiltonian_energy_partial_count(impl.state_size);
     gpu_stage(profiler, "hamiltonian_ms", [&]() {
-        detail::launch_apply_hamiltonian(impl.lambda.get(), impl.current.get(),
-                                         impl.state_size, impl.num_qubits,
-                                         impl.field);
+        detail::launch_apply_hamiltonian_energy_partials(
+            impl.lambda.get(), impl.current.get(), impl.scratch.get(),
+            impl.state_size, impl.num_qubits, impl.field);
     });
 
     EnergyGradResult result;
     result.energy = gpu_stage(
         profiler, "energy_dot_ms",
         [&]() {
-            return detail::complex_inner_product(impl.current.get(), impl.lambda.get(),
-                                                 impl.state_size)
-                .real();
+            return detail::sum_real_parts(impl.scratch.get(),
+                                          energy_partial_count);
         });
 
     if (!compute_gradient) {

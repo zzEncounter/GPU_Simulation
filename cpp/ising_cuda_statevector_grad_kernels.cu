@@ -797,6 +797,247 @@ __global__ void inverse_walk_ryrz_rotation_chunk_w4_cell2_kernel(
     }
 }
 
+__device__ __forceinline__ auto inverse_ring_cnot_source_index(
+    std::size_t index, std::size_t num_qubits) -> std::size_t {
+    const auto mask = (std::size_t{1} << num_qubits) - 1;
+    auto prefix = index;
+    prefix ^= prefix << 1U;
+    prefix ^= prefix << 2U;
+    prefix ^= prefix << 4U;
+    prefix ^= prefix << 8U;
+    prefix ^= prefix << 16U;
+    if constexpr (sizeof(std::size_t) > 4) {
+        prefix ^= prefix << 32U;
+    }
+    prefix &= mask;
+    auto transformed = prefix & ~std::size_t{1};
+    transformed |= static_cast<std::size_t>(
+        __popcll(static_cast<unsigned long long>(index >> 1U)) & 1U);
+    return transformed;
+}
+
+__global__ void inverse_ring_cnot_then_w4_rotation_chunk_kernel(
+    const Complex *current_in, const Complex *lambda_in, Complex *current_out,
+    Complex *lambda_out, std::size_t size, std::size_t num_qubits,
+    std::size_t chunk_start, RotationChunkCoeffs coeffs,
+    double *out_gradients) {
+    constexpr int W = 4;
+    constexpr int block_threads = 128;
+    constexpr int tile_dim = 1 << W;
+    constexpr int cells_per_tile = 4;
+    constexpr int tiles_per_block = block_threads / cells_per_tile;
+    constexpr int shared_values = tiles_per_block * tile_dim;
+
+    __shared__ Complex current_tile[shared_values];
+    __shared__ Complex lambda_tile[shared_values];
+    __shared__ double theta_partial[W * block_threads];
+    __shared__ double phi_partial[W * block_threads];
+
+    const int local_cell = threadIdx.x / tiles_per_block;
+    const int local_tile = threadIdx.x & (tiles_per_block - 1);
+    const auto tile_id =
+        static_cast<std::size_t>(blockIdx.x) * tiles_per_block +
+        static_cast<std::size_t>(local_tile);
+    const auto num_tiles = size / static_cast<std::size_t>(tile_dim);
+    const bool active = tile_id < num_tiles;
+
+    std::size_t base = 0;
+    if (active) {
+        const auto low_mask = (std::size_t{1} << chunk_start) - 1;
+        base = (tile_id & low_mask) | ((tile_id & ~low_mask) << W);
+    }
+
+    const auto load_current = [&](int local_index) -> Complex {
+        if (!active) {
+            return Complex(0.0, 0.0);
+        }
+        const auto out_index =
+            base | (static_cast<std::size_t>(local_index) << chunk_start);
+        return current_in[inverse_ring_cnot_source_index(out_index,
+                                                         num_qubits)];
+    };
+    const auto load_lambda = [&](int local_index) -> Complex {
+        if (!active) {
+            return Complex(0.0, 0.0);
+        }
+        const auto out_index =
+            base | (static_cast<std::size_t>(local_index) << chunk_start);
+        return lambda_in[inverse_ring_cnot_source_index(out_index,
+                                                        num_qubits)];
+    };
+
+    const int high_i0 = local_cell;
+    const int high_i1 = high_i0 | 4;
+    const int high_i2 = high_i0 | 8;
+    const int high_i3 = high_i0 | 12;
+
+    Complex c0 = load_current(high_i0);
+    Complex c1 = load_current(high_i1);
+    Complex c2 = load_current(high_i2);
+    Complex c3 = load_current(high_i3);
+    Complex l0 = load_lambda(high_i0);
+    Complex l1 = load_lambda(high_i1);
+    Complex l2 = load_lambda(high_i2);
+    Complex l3 = load_lambda(high_i3);
+
+    double c0_r = c0.real();
+    double c0_i = c0.imag();
+    double c1_r = c1.real();
+    double c1_i = c1.imag();
+    double c2_r = c2.real();
+    double c2_i = c2.imag();
+    double c3_r = c3.real();
+    double c3_i = c3.imag();
+    double l0_r = l0.real();
+    double l0_i = l0.imag();
+    double l1_r = l1.real();
+    double l1_i = l1.imag();
+    double l2_r = l2.real();
+    double l2_i = l2.imag();
+    double l3_r = l3.real();
+    double l3_i = l3.imag();
+
+    double theta3 = 0.0;
+    double phi3 = 0.0;
+    double theta2 = 0.0;
+    double phi2 = 0.0;
+
+    inverse_walk_ryrz_backward_pair_registers(
+        c0_r, c0_i, c2_r, c2_i, l0_r, l0_i, l2_r, l2_i, coeffs.c[3],
+        coeffs.s[3], coeffs.cos_half[3], coeffs.sin_half[3], &theta3,
+        &phi3);
+    inverse_walk_ryrz_backward_pair_registers(
+        c1_r, c1_i, c3_r, c3_i, l1_r, l1_i, l3_r, l3_i, coeffs.c[3],
+        coeffs.s[3], coeffs.cos_half[3], coeffs.sin_half[3], &theta3,
+        &phi3);
+    inverse_walk_ryrz_backward_pair_registers(
+        c0_r, c0_i, c1_r, c1_i, l0_r, l0_i, l1_r, l1_i, coeffs.c[2],
+        coeffs.s[2], coeffs.cos_half[2], coeffs.sin_half[2], &theta2,
+        &phi2);
+    inverse_walk_ryrz_backward_pair_registers(
+        c2_r, c2_i, c3_r, c3_i, l2_r, l2_i, l3_r, l3_i, coeffs.c[2],
+        coeffs.s[2], coeffs.cos_half[2], coeffs.sin_half[2], &theta2,
+        &phi2);
+
+    const int tile_offset = local_tile * tile_dim;
+    current_tile[tile_offset + high_i0] = Complex(c0_r, c0_i);
+    current_tile[tile_offset + high_i1] = Complex(c1_r, c1_i);
+    current_tile[tile_offset + high_i2] = Complex(c2_r, c2_i);
+    current_tile[tile_offset + high_i3] = Complex(c3_r, c3_i);
+    lambda_tile[tile_offset + high_i0] = Complex(l0_r, l0_i);
+    lambda_tile[tile_offset + high_i1] = Complex(l1_r, l1_i);
+    lambda_tile[tile_offset + high_i2] = Complex(l2_r, l2_i);
+    lambda_tile[tile_offset + high_i3] = Complex(l3_r, l3_i);
+
+    theta_partial[3 * block_threads + threadIdx.x] = theta3;
+    phi_partial[3 * block_threads + threadIdx.x] = phi3;
+    theta_partial[2 * block_threads + threadIdx.x] = theta2;
+    phi_partial[2 * block_threads + threadIdx.x] = phi2;
+    __syncthreads();
+
+    const int low_base = local_cell << 2;
+    const int low_i0 = low_base;
+    const int low_i1 = low_i0 | 1;
+    const int low_i2 = low_i0 | 2;
+    const int low_i3 = low_i0 | 3;
+
+    c0 = current_tile[tile_offset + low_i0];
+    c1 = current_tile[tile_offset + low_i1];
+    c2 = current_tile[tile_offset + low_i2];
+    c3 = current_tile[tile_offset + low_i3];
+    l0 = lambda_tile[tile_offset + low_i0];
+    l1 = lambda_tile[tile_offset + low_i1];
+    l2 = lambda_tile[tile_offset + low_i2];
+    l3 = lambda_tile[tile_offset + low_i3];
+
+    c0_r = c0.real();
+    c0_i = c0.imag();
+    c1_r = c1.real();
+    c1_i = c1.imag();
+    c2_r = c2.real();
+    c2_i = c2.imag();
+    c3_r = c3.real();
+    c3_i = c3.imag();
+    l0_r = l0.real();
+    l0_i = l0.imag();
+    l1_r = l1.real();
+    l1_i = l1.imag();
+    l2_r = l2.real();
+    l2_i = l2.imag();
+    l3_r = l3.real();
+    l3_i = l3.imag();
+
+    double theta1 = 0.0;
+    double phi1 = 0.0;
+    double theta0 = 0.0;
+    double phi0 = 0.0;
+
+    inverse_walk_ryrz_backward_pair_registers(
+        c0_r, c0_i, c2_r, c2_i, l0_r, l0_i, l2_r, l2_i, coeffs.c[1],
+        coeffs.s[1], coeffs.cos_half[1], coeffs.sin_half[1], &theta1,
+        &phi1);
+    inverse_walk_ryrz_backward_pair_registers(
+        c1_r, c1_i, c3_r, c3_i, l1_r, l1_i, l3_r, l3_i, coeffs.c[1],
+        coeffs.s[1], coeffs.cos_half[1], coeffs.sin_half[1], &theta1,
+        &phi1);
+    inverse_walk_ryrz_backward_pair_registers(
+        c0_r, c0_i, c1_r, c1_i, l0_r, l0_i, l1_r, l1_i, coeffs.c[0],
+        coeffs.s[0], coeffs.cos_half[0], coeffs.sin_half[0], &theta0,
+        &phi0);
+    inverse_walk_ryrz_backward_pair_registers(
+        c2_r, c2_i, c3_r, c3_i, l2_r, l2_i, l3_r, l3_i, coeffs.c[0],
+        coeffs.s[0], coeffs.cos_half[0], coeffs.sin_half[0], &theta0,
+        &phi0);
+
+    if (active) {
+        const auto store_value = [&](int local_index, double current_r,
+                                     double current_i, double lambda_r,
+                                     double lambda_i) {
+            const auto state_index =
+                base | (static_cast<std::size_t>(local_index) << chunk_start);
+            current_out[state_index] = Complex(current_r, current_i);
+            lambda_out[state_index] = Complex(lambda_r, lambda_i);
+        };
+        store_value(low_i0, c0_r, c0_i, l0_r, l0_i);
+        store_value(low_i1, c1_r, c1_i, l1_r, l1_i);
+        store_value(low_i2, c2_r, c2_i, l2_r, l2_i);
+        store_value(low_i3, c3_r, c3_i, l3_r, l3_i);
+    }
+
+    theta_partial[1 * block_threads + threadIdx.x] = theta1;
+    phi_partial[1 * block_threads + threadIdx.x] = phi1;
+    theta_partial[0 * block_threads + threadIdx.x] = theta0;
+    phi_partial[0 * block_threads + threadIdx.x] = phi0;
+    __syncthreads();
+
+    for (int stride = block_threads / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+#pragma unroll
+            for (int local_wire = 0; local_wire < W; local_wire++) {
+                const auto partial_offset =
+                    static_cast<std::size_t>(local_wire) * block_threads;
+                theta_partial[partial_offset + threadIdx.x] +=
+                    theta_partial[partial_offset + threadIdx.x + stride];
+                phi_partial[partial_offset + threadIdx.x] +=
+                    phi_partial[partial_offset + threadIdx.x + stride];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+#pragma unroll
+        for (int local_wire = 0; local_wire < W; local_wire++) {
+            const auto partial_offset =
+                static_cast<std::size_t>(local_wire) * block_threads;
+            atomicAdd(out_gradients + local_wire * 2,
+                      2.0 * theta_partial[partial_offset]);
+            atomicAdd(out_gradients + local_wire * 2 + 1,
+                      2.0 * phi_partial[partial_offset]);
+        }
+    }
+}
+
 __device__ __forceinline__ auto two_wire_cell_base(int cell, int low_wire)
     -> int {
     const int low_mask = (1 << low_wire) - 1;
@@ -1297,6 +1538,36 @@ void launch_inverse_walk_ryrz_rotation_chunk(
                "inverse_walk_ryrz_rotation_chunk_kernel");
     maybe_synchronize_cuda(
         "inverse_walk_ryrz_rotation_chunk_kernel sync");
+}
+
+void launch_inverse_ring_cnot_then_w4_rotation_chunk(
+    const Complex *current_in, const Complex *lambda_in, Complex *current_out,
+    Complex *lambda_out, std::size_t size, std::size_t num_qubits,
+    std::size_t chunk_start, const double *theta_ry, const double *theta_rz,
+    double *out_gradients) {
+    constexpr auto W = std::size_t{4};
+    constexpr auto tile_dim = std::size_t{1} << W;
+    constexpr auto block_threads = 128;
+    constexpr auto tiles_per_block = std::size_t{32};
+
+    if (chunk_start + W >= sizeof(std::size_t) * 8 ||
+        (std::size_t{1} << (chunk_start + W)) > size) {
+        throw std::invalid_argument(
+            "fused inverse CNOT rotation chunk exceeds state dimension.");
+    }
+
+    const auto coeffs =
+        make_inverse_walk_rotation_chunk_coeffs(W, theta_ry, theta_rz);
+    const auto num_tiles = size / tile_dim;
+    const auto blocks = static_cast<int>(
+        (num_tiles + tiles_per_block - 1) / tiles_per_block);
+    inverse_ring_cnot_then_w4_rotation_chunk_kernel<<<blocks, block_threads>>>(
+        current_in, lambda_in, current_out, lambda_out, size, num_qubits,
+        chunk_start, coeffs, out_gradients);
+    check_cuda(cudaGetLastError(),
+               "inverse_ring_cnot_then_w4_rotation_chunk_kernel");
+    maybe_synchronize_cuda(
+        "inverse_ring_cnot_then_w4_rotation_chunk_kernel sync");
 }
 
 void launch_inverse_walk_cnot_step(Complex *current, Complex *lambda,

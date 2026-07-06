@@ -14,6 +14,11 @@ struct EnergyGradResult {
     std::vector<std::pair<std::string, double>> stage_timings_ms;
 };
 
+struct CudaGraphBenchmarkResult {
+    double normal_forward_ms{0.0};
+    double graph_forward_ms{0.0};
+};
+
 class RingIsingCudaBackend {
   public:
     struct Impl;
@@ -33,6 +38,10 @@ class RingIsingCudaBackend {
     auto energy_and_grad(const double *params, std::size_t num_params,
                          bool compute_gradient = true,
                          bool profile = false) -> EnergyGradResult;
+    auto benchmark_structured_forward_graph(const double *params,
+                                            std::size_t num_params,
+                                            std::size_t repeats)
+        -> CudaGraphBenchmarkResult;
 
   private:
     std::unique_ptr<Impl> impl_;

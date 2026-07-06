@@ -7,6 +7,36 @@
 namespace standalone_backend {
 namespace detail {
 
+struct ProductStateInitCoeffs {
+    double zero_r[PRODUCT_STATE_INIT_MAX_QUBITS]{};
+    double zero_i[PRODUCT_STATE_INIT_MAX_QUBITS]{};
+    double one_r[PRODUCT_STATE_INIT_MAX_QUBITS]{};
+    double one_i[PRODUCT_STATE_INIT_MAX_QUBITS]{};
+};
+
+__global__ void init_ryrz_product_state_kernel(
+    Complex *state, std::size_t size, std::size_t num_qubits,
+    ProductStateInitCoeffs coeffs) {
+    const auto index = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                                threadIdx.x);
+    if (index >= size) {
+        return;
+    }
+
+    double value_r = 1.0;
+    double value_i = 0.0;
+    for (std::size_t wire = 0; wire < num_qubits; wire++) {
+        const bool one = bit_is_set(index, wire);
+        const double factor_r = one ? coeffs.one_r[wire] : coeffs.zero_r[wire];
+        const double factor_i = one ? coeffs.one_i[wire] : coeffs.zero_i[wire];
+        const double next_r = value_r * factor_r - value_i * factor_i;
+        const double next_i = value_r * factor_i + value_i * factor_r;
+        value_r = next_r;
+        value_i = next_i;
+    }
+    state[index] = Complex(value_r, value_i);
+}
+
 __device__ __forceinline__ void apply_ryrz_forward_pair(
     double c, double s, double cos_half, double sin_half, const Complex &a0,
     const Complex &a1, Complex *out0, Complex *out1) {
@@ -301,7 +331,7 @@ template <int W>
 void launch_apply_ryrz_rotation_chunk_specialized(
     Complex *state, std::size_t size, std::size_t chunk_start,
     RotationChunkCoeffs coeffs,
-    RotationChunkKernelPreference kernel_preference) {
+    RotationChunkKernelPreference kernel_preference, cudaStream_t stream) {
     constexpr auto tile_dim = std::size_t{1} << W;
     const auto num_tiles = size / tile_dim;
     if constexpr (W <= 4) {
@@ -312,8 +342,8 @@ void launch_apply_ryrz_rotation_chunk_specialized(
                 static_cast<int>((num_tiles + register_threads - 1) /
                                  register_threads);
             apply_ryrz_rotation_chunk_register_kernel<W>
-                <<<blocks, register_threads>>>(state, size, chunk_start,
-                                               coeffs);
+                <<<blocks, register_threads, 0, stream>>>(
+                    state, size, chunk_start, coeffs);
             return;
         }
     }
@@ -324,7 +354,8 @@ void launch_apply_ryrz_rotation_chunk_specialized(
             const auto blocks = static_cast<int>(
                 (num_tiles + tiles_per_block - 1) / tiles_per_block);
             apply_ryrz_rotation_chunk_cooperative_pair512_kernel
-                <<<blocks, THREADS>>>(state, size, chunk_start, coeffs);
+                <<<blocks, THREADS, 0, stream>>>(
+                    state, size, chunk_start, coeffs);
             return;
         }
     }
@@ -346,8 +377,9 @@ void launch_apply_ryrz_rotation_chunk_specialized(
             static_cast<std::size_t>(THREADS) / tile_dim;
         const auto blocks = static_cast<int>(
             (num_tiles + tiles_per_block - 1) / tiles_per_block);
-        apply_ryrz_rotation_chunk_cooperative_kernel<W><<<blocks, THREADS>>>(
-            state, size, chunk_start, coeffs);
+        apply_ryrz_rotation_chunk_cooperative_kernel<W>
+            <<<blocks, THREADS, 0, stream>>>(state, size, chunk_start,
+                                             coeffs);
     }
 }
 
@@ -367,13 +399,49 @@ auto make_rotation_chunk_coeffs(std::size_t chunk_width,
     return coeffs;
 }
 
+void launch_init_ryrz_product_state(Complex *state, std::size_t size,
+                                    std::size_t num_qubits,
+                                    const double *layer_params,
+                                    cudaStream_t stream) {
+    if (num_qubits > PRODUCT_STATE_INIT_MAX_QUBITS) {
+        throw std::invalid_argument(
+            "product-state initialization exceeds supported qubit count.");
+    }
+
+    ProductStateInitCoeffs coeffs{};
+    for (std::size_t wire = 0; wire < num_qubits; wire++) {
+        const double theta =
+            layer_params != nullptr ? layer_params[wire * 2] : 0.0;
+        const double phi =
+            layer_params != nullptr ? layer_params[wire * 2 + 1] : 0.0;
+        const double ry = theta * 0.5;
+        const double rz = phi * 0.5;
+        const double c = std::cos(ry);
+        const double s = std::sin(ry);
+        const double cos_half = std::cos(rz);
+        const double sin_half = std::sin(rz);
+
+        coeffs.zero_r[wire] = c * cos_half;
+        coeffs.zero_i[wire] = -c * sin_half;
+        coeffs.one_r[wire] = s * cos_half;
+        coeffs.one_i[wire] = s * sin_half;
+    }
+
+    const auto blocks = static_cast<int>((size + THREADS - 1) / THREADS);
+    init_ryrz_product_state_kernel<<<blocks, THREADS, 0, stream>>>(
+        state, size, num_qubits, coeffs);
+    check_cuda(cudaGetLastError(), "init_ryrz_product_state_kernel");
+    maybe_synchronize_cuda("init_ryrz_product_state_kernel sync");
+}
+
 void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
                                       std::size_t chunk_start,
                                       std::size_t chunk_width,
                                       const double *theta_ry,
                                       const double *theta_rz,
                                       RotationChunkKernelPreference
-                                          kernel_preference) {
+                                          kernel_preference,
+                                      cudaStream_t stream) {
     if (chunk_width == 0) {
         return;
     }
@@ -400,31 +468,31 @@ void launch_apply_ryrz_rotation_chunk(Complex *state, std::size_t size,
     switch (chunk_width) {
     case 2:
         launch_apply_ryrz_rotation_chunk_specialized<2>(
-            state, size, chunk_start, coeffs, kernel_preference);
+            state, size, chunk_start, coeffs, kernel_preference, stream);
         break;
     case 3:
         launch_apply_ryrz_rotation_chunk_specialized<3>(
-            state, size, chunk_start, coeffs, kernel_preference);
+            state, size, chunk_start, coeffs, kernel_preference, stream);
         break;
     case 4:
         launch_apply_ryrz_rotation_chunk_specialized<4>(
-            state, size, chunk_start, coeffs, kernel_preference);
+            state, size, chunk_start, coeffs, kernel_preference, stream);
         break;
     case 5:
         launch_apply_ryrz_rotation_chunk_specialized<5>(
-            state, size, chunk_start, coeffs, kernel_preference);
+            state, size, chunk_start, coeffs, kernel_preference, stream);
         break;
     case 6:
         launch_apply_ryrz_rotation_chunk_specialized<6>(
-            state, size, chunk_start, coeffs, kernel_preference);
+            state, size, chunk_start, coeffs, kernel_preference, stream);
         break;
     case 7:
         launch_apply_ryrz_rotation_chunk_specialized<7>(
-            state, size, chunk_start, coeffs, kernel_preference);
+            state, size, chunk_start, coeffs, kernel_preference, stream);
         break;
     case 8:
         launch_apply_ryrz_rotation_chunk_specialized<8>(
-            state, size, chunk_start, coeffs, kernel_preference);
+            state, size, chunk_start, coeffs, kernel_preference, stream);
         break;
     default:
         throw std::invalid_argument("unsupported rotation chunk width.");

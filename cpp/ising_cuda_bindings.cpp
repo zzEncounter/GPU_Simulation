@@ -54,6 +54,18 @@ auto make_energy_grad_dict(const standalone_backend::EnergyGradResult &result)
     return out;
 }
 
+auto make_cuda_graph_benchmark_dict(
+    const standalone_backend::CudaGraphBenchmarkResult &result) -> py::dict {
+    py::dict out;
+    out["normal_forward_ms"] = py::float_(result.normal_forward_ms);
+    out["graph_forward_ms"] = py::float_(result.graph_forward_ms);
+    out["speedup"] = py::float_(
+        result.graph_forward_ms > 0.0
+            ? result.normal_forward_ms / result.graph_forward_ms
+            : 0.0);
+    return out;
+}
+
 } // namespace
 
 PYBIND11_MODULE(_cuda_backend, m) {
@@ -83,6 +95,22 @@ PYBIND11_MODULE(_cuda_backend, m) {
             py::arg("params"),
             py::arg("compute_gradient") = true,
             py::arg("profile") = false)
+        .def(
+            "benchmark_structured_forward_graph",
+            [](standalone_backend::RingIsingCudaBackend &self,
+               FlatArray params,
+               std::size_t repeats) {
+                const auto view = view_params(params);
+                standalone_backend::CudaGraphBenchmarkResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = self.benchmark_structured_forward_graph(
+                        view.ptr, view.size, repeats);
+                }
+                return make_cuda_graph_benchmark_dict(result);
+            },
+            py::arg("params"),
+            py::arg("repeats") = 100)
         ;
 
     m.def(
