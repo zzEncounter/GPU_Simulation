@@ -6,13 +6,13 @@ from dataclasses import dataclass
 
 BACKENDS = ("pennylane", "standalone")
 STANDALONE_GRADIENT_STRATEGIES = (
-    "inverse_walk",
+    "inverse_walk_cuQuantum",
     "structured_adjoint",
     "dense_scan",
 )
-EXPERIMENTAL_STANDALONE_GRADIENT_STRATEGIES = ("ryrz_fused",)
+EXPERIMENTAL_STANDALONE_GRADIENT_STRATEGIES = ()
 STANDALONE_GRADIENT_STRATEGY_ALIASES = {
-    "mode2": "structured_adjoint",
+    "inverse_walk_cuquantum": "inverse_walk_cuQuantum",
 }
 SUPPORTED_STANDALONE_GRADIENT_STRATEGIES = (
     *STANDALONE_GRADIENT_STRATEGIES,

@@ -23,7 +23,7 @@ from ring_ising.backends.standalone import RingIsingAdjointBackend, StandaloneBa
 from ring_ising.params import make_initial_params_array
 
 MODES = (
-    "inverse_walk",
+    "inverse_walk_cuQuantum",
     "structured_adjoint",
 )
 NCU_METRICS = ("gpu__time_duration.sum",)
@@ -647,7 +647,7 @@ def mode_specs(
 ) -> list[tuple[str, str, int]]:
     specs: list[tuple[str, str, int]] = []
     for mode in modes:
-        if mode in {"structured_adjoint", "mode2"}:
+        if mode == "structured_adjoint":
             specs.extend(
                 (f"structured_w{width}", "structured_adjoint", width)
                 for width in structured_widths

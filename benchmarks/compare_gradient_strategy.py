@@ -89,13 +89,13 @@ def parse_args() -> argparse.Namespace:
         "--modes",
         nargs="+",
         type=parse_mode,
-        default=["inverse_walk", "structured_adjoint"],
+        default=["inverse_walk_cuQuantum", "structured_adjoint"],
         help="Standalone gradient strategies to compare.",
     )
     parser.add_argument(
         "--reference-mode",
         type=parse_mode,
-        default="inverse_walk",
+        default="structured_adjoint",
         help="Mode used as the timing and energy reference.",
     )
     parser.add_argument("--field", type=float, default=1.0)

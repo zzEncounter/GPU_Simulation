@@ -31,6 +31,18 @@ void check_cublas(cublasStatus_t status, const char *context) {
                              std::to_string(static_cast<int>(status)));
 }
 
+void check_custatevec(custatevecStatus_t status, const char *context) {
+    if (status == CUSTATEVEC_STATUS_SUCCESS) {
+        return;
+    }
+    const char *error_name = custatevecGetErrorName(status);
+    const char *error_string = custatevecGetErrorString(status);
+    throw std::runtime_error(
+        std::string(context) + ": cuStateVec call failed with status " +
+        (error_name != nullptr ? error_name : "unknown") + " (" +
+        (error_string != nullptr ? error_string : "no details") + ")");
+}
+
 void maybe_synchronize_cuda(const char *context) {
 #ifdef STANDALONE_CUDA_EAGER_SYNC
     check_cuda(cudaDeviceSynchronize(), context);

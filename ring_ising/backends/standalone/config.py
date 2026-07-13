@@ -57,8 +57,7 @@ class StandaloneBackendConfig:
     def estimated_gradient_state_buffers_for(self, strategy: str) -> int:
         normalized = STANDALONE_GRADIENT_STRATEGY_ALIASES.get(strategy, strategy)
         if normalized in {
-            "inverse_walk",
-            "ryrz_fused",
+            "inverse_walk_cuQuantum",
             *STRUCTURED_ADJOINT_GRADIENT_STRATEGIES,
         }:
             return 4
@@ -99,7 +98,7 @@ class StandaloneBackendConfig:
             raise ValueError("layers must be at least 1.")
         if self.gradient_strategy not in SUPPORTED_STANDALONE_GRADIENT_STRATEGIES:
             raise ValueError(
-                "gradient_strategy must be one of public strategies "
+            "gradient_strategy must be one of public strategies "
                 f"{STANDALONE_GRADIENT_STRATEGIES!r}; experimental/legacy "
                 f"accepted strategies are {SUPPORTED_STANDALONE_GRADIENT_STRATEGIES!r}."
             )

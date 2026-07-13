@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -60,6 +62,60 @@ def list_extension_sources(cpp_dir: Path) -> list[str]:
 
 
 CPP_DIR = find_cpp_dir()
+CUQUANTUM_ROOT_ENV = "CUQUANTUM_ROOT"
+
+
+def _candidate_cuquantum_roots() -> list[Path]:
+    candidates: list[Path] = []
+
+    env_root = os.environ.get(CUQUANTUM_ROOT_ENV)
+    if env_root:
+        candidates.append(Path(env_root).expanduser())
+
+    spec = importlib.util.find_spec("cuquantum")
+    if spec is not None and spec.submodule_search_locations:
+        candidates.extend(
+            Path(path).expanduser() for path in spec.submodule_search_locations
+        )
+
+    candidates.append(
+        ROOT
+        / ".venv"
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+        / "cuquantum"
+    )
+    return candidates
+
+
+def find_custatevec_paths() -> tuple[Path, Path]:
+    checked: list[str] = []
+    seen: set[Path] = set()
+    for candidate in _candidate_cuquantum_roots():
+        try:
+            root = candidate.resolve()
+        except FileNotFoundError:
+            checked.append(str(candidate))
+            continue
+        if root in seen:
+            continue
+        seen.add(root)
+        checked.append(str(root))
+
+        include_dir = root / "include"
+        if not (include_dir / "custatevec.h").is_file():
+            continue
+        for lib_name in ("libcustatevec.so", "libcustatevec.so.1", "custatevec.lib"):
+            lib_file = root / "lib" / lib_name
+            if lib_file.is_file():
+                return include_dir, lib_file
+
+    searched = ", ".join(checked) if checked else "no candidates"
+    raise RuntimeError(
+        "Could not locate cuStateVec. Install the cuQuantum Python package or set "
+        f"{CUQUANTUM_ROOT_ENV}. Checked: {searched}"
+    )
 
 
 def _find_cuda_target_dir(cuda_home: Path) -> Path | None:
@@ -203,6 +259,7 @@ class BuildCudaExtension(build_ext):
         cuda_home = find_cuda_home()
         cuda_include_dir = get_cuda_include_path(cuda_home)
         cuda_lib_dir = get_cuda_lib_path(cuda_home)
+        custatevec_include_dir, custatevec_lib_file = find_custatevec_paths()
 
         ext.include_dirs = _unique_path_strings(
             [
@@ -211,12 +268,17 @@ class BuildCudaExtension(build_ext):
                 pybind11.get_include(),
                 np.get_include(),
                 cuda_include_dir,
+                custatevec_include_dir,
             ]
         )
         ext.library_dirs = _unique_path_strings([*(ext.library_dirs or []), cuda_lib_dir])
         if os.name != "nt":
             ext.runtime_library_dirs = _unique_path_strings(
-                [*(ext.runtime_library_dirs or []), cuda_lib_dir]
+                [
+                    *(ext.runtime_library_dirs or []),
+                    cuda_lib_dir,
+                    custatevec_lib_file.parent,
+                ]
             )
 
         build_temp = Path(self.build_temp)
@@ -264,6 +326,7 @@ class BuildCudaExtension(build_ext):
             objects.append(str(object_path))
 
         link_args = list(getattr(ext, "extra_link_args", []))
+        link_args.append(str(custatevec_lib_file))
         self.compiler.link_shared_object(
             objects,
             str(ext_path),
