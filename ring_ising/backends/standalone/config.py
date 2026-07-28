@@ -24,6 +24,7 @@ class StandaloneBackendConfig:
     gradient_strategy: str
     structured_rotation_chunk_width: int = 8
     mode2_rotation_chunk_width: int | None = None
+    double_buffer: bool = False
 
     @property
     def param_shape(self) -> tuple[int, int, int]:

@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <stdexcept>
 
+#include <cuda/pipeline>
+#include <cooperative_groups.h>
+
 namespace standalone_backend {
 namespace detail {
 
@@ -304,6 +307,250 @@ __global__ void apply_ryrz_rotation_chunk_register_kernel(
     }
 }
 
+// ============================================================
+// Phase 1: Register kernel with grid-stride double buffer (W=2/3/4)
+// Each thread processes multiple tiles in a grid-stride loop.
+// The next tile is loaded into values_nxt[] while values_cur[] is being
+// computed, giving the hardware scheduler a chance to overlap DRAM latency
+// with arithmetic (instruction-level parallelism / software pipelining).
+// ============================================================
+
+template <int W>
+__global__ void apply_ryrz_rotation_chunk_register_db_kernel(
+    Complex *state, std::size_t size, std::size_t chunk_start,
+    RotationChunkCoeffs coeffs) {
+    static_assert(W >= 2 && W <= 4,
+                  "RegisterDoubleBuffer is only supported for W <= 4");
+
+    constexpr auto tile_dim = std::size_t{1} << W;
+    constexpr auto pairs_per_wire = tile_dim / 2;
+    const auto num_tiles = size / tile_dim;
+    const auto stride = static_cast<std::size_t>(gridDim.x) *
+                        static_cast<std::size_t>(blockDim.x);
+    auto tile_id = static_cast<std::size_t>(blockIdx.x * blockDim.x +
+                                            threadIdx.x);
+    if (tile_id >= num_tiles) {
+        return;
+    }
+
+    const auto low_mask = (std::size_t{1} << chunk_start) - 1;
+
+    // Helper: compute the base DRAM address for a given tile_id
+    auto tile_base = [&](std::size_t tid) -> std::size_t {
+        return (tid & low_mask) | ((tid & ~low_mask) << W);
+    };
+
+    // Helper: apply all W RyRz gates to a register array in-place
+    auto compute = [&](Complex *vals) {
+#pragma unroll
+        for (int local_wire = 0; local_wire < W; local_wire++) {
+            const double c = coeffs.c[local_wire];
+            const double s = coeffs.s[local_wire];
+            const double cos_half = coeffs.cos_half[local_wire];
+            const double sin_half = coeffs.sin_half[local_wire];
+            const auto bit = std::size_t{1} << local_wire;
+            const auto pair_low_mask = bit - 1;
+#pragma unroll
+            for (int pair = 0; pair < static_cast<int>(pairs_per_wire); pair++) {
+                const auto pi = static_cast<std::size_t>(pair);
+                const auto lo = pi & pair_low_mask;
+                const auto hi = pi >> local_wire;
+                const auto i0 = (hi << (local_wire + 1)) | lo;
+                const auto i1 = i0 | bit;
+                Complex out0, out1;
+                apply_ryrz_forward_pair(c, s, cos_half, sin_half,
+                                        vals[i0], vals[i1], &out0, &out1);
+                vals[i0] = out0;
+                vals[i1] = out1;
+            }
+        }
+    };
+
+    // Prologue: load first tile into values_cur
+    Complex values_cur[tile_dim];
+    {
+        const auto base = tile_base(tile_id);
+#pragma unroll
+        for (int i = 0; i < static_cast<int>(tile_dim); i++) {
+            values_cur[i] = state[base | (static_cast<std::size_t>(i) << chunk_start)];
+        }
+    }
+
+    // Main loop: prefetch next tile while computing current tile
+    Complex values_nxt[tile_dim];
+    while (tile_id + stride < num_tiles) {
+        // Prefetch next tile (issued before compute so hardware can overlap)
+        const auto nxt_base = tile_base(tile_id + stride);
+#pragma unroll
+        for (int i = 0; i < static_cast<int>(tile_dim); i++) {
+            values_nxt[i] = state[nxt_base | (static_cast<std::size_t>(i) << chunk_start)];
+        }
+
+        // Compute current tile
+        compute(values_cur);
+
+        // Store current tile
+        const auto cur_base = tile_base(tile_id);
+#pragma unroll
+        for (int i = 0; i < static_cast<int>(tile_dim); i++) {
+            state[cur_base | (static_cast<std::size_t>(i) << chunk_start)] = values_cur[i];
+        }
+
+        // Advance and swap buffers
+        tile_id += stride;
+#pragma unroll
+        for (int i = 0; i < static_cast<int>(tile_dim); i++) {
+            values_cur[i] = values_nxt[i];
+        }
+    }
+
+    // Epilogue: compute and store the last tile
+    compute(values_cur);
+    const auto last_base = tile_base(tile_id);
+#pragma unroll
+    for (int i = 0; i < static_cast<int>(tile_dim); i++) {
+        state[last_base | (static_cast<std::size_t>(i) << chunk_start)] = values_cur[i];
+    }
+}
+
+// ============================================================
+// Phase 2: Cooperative kernel with shared-memory double buffer (W=2..8)
+// Uses cuda::pipeline<thread_scope_block> + cuda::memcpy_async to overlap
+// DRAM loads of the next tile with computation of the current tile.
+// The pipeline depth is 2 (double buffer).
+// ============================================================
+
+template <int W>
+__global__ void apply_ryrz_rotation_chunk_cooperative_db_kernel(
+    Complex *state, std::size_t size, std::size_t chunk_start,
+    RotationChunkCoeffs coeffs) {
+    static_assert(W >= 2 && W <= static_cast<int>(ROTATION_CHUNK_MAX_WIRES),
+                  "unsupported rotation chunk width");
+
+    // Double buffer: two shared-memory tiles
+    __shared__ Complex tile[2][THREADS];
+    __shared__ cuda::pipeline_shared_state<cuda::thread_scope_block, 2> pipe_state;
+
+    constexpr auto tile_dim = std::size_t{1} << W;
+    constexpr auto tiles_per_block =
+        static_cast<std::size_t>(THREADS) / tile_dim;
+    const auto local_thread = static_cast<std::size_t>(threadIdx.x);
+    const auto local_tile = local_thread / tile_dim;
+    const auto local_index = local_thread & (tile_dim - 1);
+    const auto num_tiles = size / tile_dim;
+    const auto low_mask = (std::size_t{1} << chunk_start) - 1;
+
+    // Each block processes a contiguous range of tiles in steps of tiles_per_block
+    const auto block_tile_base =
+        static_cast<std::size_t>(blockIdx.x) * tiles_per_block;
+    const auto total_block_tiles =
+        (num_tiles > block_tile_base)
+            ? ((num_tiles - block_tile_base + tiles_per_block - 1) /
+               tiles_per_block)
+            : std::size_t{0};
+
+    if (total_block_tiles == 0) {
+        return;
+    }
+
+    auto block = cooperative_groups::this_thread_block();
+    auto pipeline = cuda::make_pipeline(block, &pipe_state);
+
+    // Helper: compute state_index for (block_tile_step, local_tile, local_index)
+    auto state_idx = [&](std::size_t block_step) -> std::size_t {
+        const auto tile_id = block_tile_base + block_step * tiles_per_block + local_tile;
+        if (tile_id >= num_tiles) {
+            return static_cast<std::size_t>(-1); // sentinel: inactive
+        }
+        const auto base = (tile_id & low_mask) | ((tile_id & ~low_mask) << W);
+        return base | (local_index << chunk_start);
+    };
+
+    // Prologue: async-load step 0 into tile[0]
+    int cur_buf = 0;
+    {
+        const auto sidx = state_idx(0);
+        pipeline.producer_acquire();
+        if (sidx != static_cast<std::size_t>(-1)) {
+            cuda::memcpy_async(
+                &tile[cur_buf][local_thread],
+                &state[sidx],
+                sizeof(Complex), pipeline);
+        } else {
+            tile[cur_buf][local_thread] = Complex(0.0, 0.0);
+        }
+        pipeline.producer_commit();
+    }
+
+    for (std::size_t step = 0; step < total_block_tiles; step++) {
+        // Prefetch next step into tile[1-cur_buf]
+        if (step + 1 < total_block_tiles) {
+            const auto sidx_nxt = state_idx(step + 1);
+            pipeline.producer_acquire();
+            if (sidx_nxt != static_cast<std::size_t>(-1)) {
+                cuda::memcpy_async(
+                    &tile[1 - cur_buf][local_thread],
+                    &state[sidx_nxt],
+                    sizeof(Complex), pipeline);
+            } else {
+                tile[1 - cur_buf][local_thread] = Complex(0.0, 0.0);
+            }
+            pipeline.producer_commit();
+        }
+
+        // Wait for current step data
+        pipeline.consumer_wait();
+
+        // Compute: warp-shuffle for wire < 5, shared-mem for wire >= 5
+        Complex value = tile[cur_buf][local_thread];
+        const auto tile_id = block_tile_base + step * tiles_per_block + local_tile;
+        const bool active = tile_id < num_tiles;
+
+        constexpr auto warp_local_wires = W < 5 ? W : 5;
+#pragma unroll
+        for (int local_wire = 0; local_wire < warp_local_wires; local_wire++) {
+            value = apply_ryrz_forward_warp_pair(value, static_cast<unsigned>(local_index),
+                                                 local_wire, coeffs);
+        }
+
+        if constexpr (W > 5) {
+            tile[cur_buf][local_thread] = value;
+            __syncthreads();
+        }
+
+#pragma unroll
+        for (int local_wire = 5; local_wire < W; local_wire++) {
+            const auto bit = std::size_t{1} << local_wire;
+            if (active && (local_index & bit) == 0U) {
+                const auto partner_thread = local_thread | bit;
+                Complex out0, out1;
+                apply_ryrz_forward_pair(
+                    coeffs.c[local_wire], coeffs.s[local_wire],
+                    coeffs.cos_half[local_wire], coeffs.sin_half[local_wire],
+                    tile[cur_buf][local_thread], tile[cur_buf][partner_thread],
+                    &out0, &out1);
+                tile[cur_buf][local_thread] = out0;
+                tile[cur_buf][partner_thread] = out1;
+            }
+            __syncthreads();
+        }
+
+        if constexpr (W > 5) {
+            value = tile[cur_buf][local_thread];
+        }
+
+        pipeline.consumer_release();
+
+        // Store result
+        const auto sidx = state_idx(step);
+        if (active && sidx != static_cast<std::size_t>(-1)) {
+            state[sidx] = value;
+        }
+
+        cur_buf = 1 - cur_buf;
+    }
+}
+
 auto structured_state_qubits(std::size_t size) -> std::size_t {
     std::size_t qubits = 0;
     while ((std::size_t{1} << qubits) < size) {
@@ -346,6 +593,34 @@ void launch_apply_ryrz_rotation_chunk_specialized(
                     state, size, chunk_start, coeffs);
             return;
         }
+        // Phase 1: grid-stride register double buffer
+        if (kernel_preference ==
+            RotationChunkKernelPreference::RegisterDoubleBuffer) {
+            const auto register_threads =
+                structured_register_threads_per_block(size, W);
+            // Use a fixed grid of 2048 blocks so each thread processes
+            // multiple tiles in the grid-stride loop.
+            constexpr int DB_GRID = 2048;
+            const auto blocks = static_cast<int>(
+                std::min(static_cast<std::size_t>(DB_GRID),
+                         (num_tiles + register_threads - 1) /
+                             static_cast<std::size_t>(register_threads)));
+            apply_ryrz_rotation_chunk_register_db_kernel<W>
+                <<<blocks, register_threads, 0, stream>>>(
+                    state, size, chunk_start, coeffs);
+            return;
+        }
+    }
+    // Phase 2: cooperative shared-memory double buffer (all widths)
+    if (kernel_preference ==
+        RotationChunkKernelPreference::CooperativeDoubleBuffer) {
+        constexpr auto tiles_per_block =
+            static_cast<std::size_t>(THREADS) / tile_dim;
+        const auto blocks = static_cast<int>(
+            (num_tiles + tiles_per_block - 1) / tiles_per_block);
+        apply_ryrz_rotation_chunk_cooperative_db_kernel<W>
+            <<<blocks, THREADS, 0, stream>>>(state, size, chunk_start, coeffs);
+        return;
     }
     if constexpr (W == 8) {
         if (kernel_preference ==

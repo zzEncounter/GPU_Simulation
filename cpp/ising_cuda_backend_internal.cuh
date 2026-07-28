@@ -35,7 +35,10 @@ constexpr int THREADS = 256;
 enum class RotationChunkKernelPreference : int {
     Cooperative,
     CooperativePair512,
-    Register
+    Register,
+    RegisterDoubleBuffer,           // Phase 1: forward Register kernel + grid-stride double buffer
+    CooperativeDoubleBuffer,        // Phase 2: forward Cooperative kernel + shared-mem double buffer
+    CooperativeBackwardDoubleBuffer // Phase 3: backward Cooperative kernel + shared-mem double buffer
 };
 
 constexpr std::size_t PRODUCT_STATE_INIT_MAX_QUBITS = 32;
@@ -147,6 +150,11 @@ void launch_inverse_walk_ryrz_step(Complex *current, Complex *lambda,
                                    double *out_theta_gradient,
                                    double *out_phi_gradient);
 void launch_inverse_walk_ryrz_rotation_chunk(
+    Complex *current, Complex *lambda, std::size_t size,
+    std::size_t chunk_start, std::size_t chunk_width,
+    const double *theta_ry, const double *theta_rz, double *out_gradients);
+// Phase 3: backward cooperative double-buffer launcher
+void launch_inverse_walk_ryrz_rotation_chunk_db(
     Complex *current, Complex *lambda, std::size_t size,
     std::size_t chunk_start, std::size_t chunk_width,
     const double *theta_ry, const double *theta_rz, double *out_gradients);

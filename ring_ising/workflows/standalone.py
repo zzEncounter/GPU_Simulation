@@ -42,6 +42,7 @@ def _to_backend_config(config: RunConfig) -> StandaloneBackendConfig:
         structured_rotation_chunk_width=(
             config.effective_structured_rotation_chunk_width
         ),
+        double_buffer=config.double_buffer,
     )
 
 

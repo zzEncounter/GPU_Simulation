@@ -30,6 +30,7 @@ class RingIsingAdjointBackend:
             float(self.config.field),
             self.gradient_strategy,
             int(self.config.effective_structured_rotation_chunk_width),
+            bool(self.config.double_buffer),
         )
 
     @staticmethod

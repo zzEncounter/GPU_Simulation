@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include <cooperative_groups.h>
+#include <cuda/pipeline>
 #include <cuda/std/functional>
 #include <thrust/complex.h>
 #include <thrust/iterator/counting_iterator.h>
@@ -1699,6 +1701,311 @@ void launch_inverse_walk_cnot_step(Complex *current, Complex *lambda,
                                                        control, target);
     check_cuda(cudaGetLastError(), "inverse_walk_cnot_step_kernel");
     maybe_synchronize_cuda("inverse_walk_cnot_step_kernel sync");
+}
+
+// ============================================================
+// Phase 3: Backward kernel with manual register double buffer (W=2..8)
+//
+// Design: grid-stride loop + manual register prefetch (no cuda::pipeline).
+//
+// Why not cuda::pipeline?
+//   The original cuda::pipeline approach had total_block_tiles=1 for every
+//   block (because blocks = num_tiles / tiles_per_block), so there was never
+//   a "next step" to overlap with.  The pipeline overhead dominated.
+//
+// This implementation uses a fixed grid of DB_GRID blocks.  Each block
+// processes multiple steps via a grid-stride loop, so total_block_tiles >> 1.
+//
+// Double-buffer mechanism (manual register prefetch):
+//   - Each thread holds TWO shared-memory slots: cur_buf and nxt_buf.
+//   - At the START of each step, we issue __ldg() loads for the NEXT step's
+//     data into registers (reg_next_current, reg_next_lambda).
+//   - We then compute the CURRENT step (using shared_mem[cur_buf]).
+//   - After compute, we write back the current step to DRAM.
+//   - We then copy the register-prefetched data into shared_mem[nxt_buf].
+//   - This way, the DRAM load for step N+1 overlaps with the compute of step N.
+//
+// Timeline (3 steps, load time ≈ compute time):
+//   step 0: [ldg next=1] [compute cur=0] [store 0] [reg→smem]
+//   step 1: [ldg next=2] [compute cur=1] [store 1] [reg→smem]
+//   step 2: [no prefetch] [compute cur=2] [store 2]
+//   The ldg for step N+1 is issued before compute of step N starts,
+//   so DRAM latency is hidden behind computation.
+// ============================================================
+
+// Fixed grid size for the db kernel.  Each block processes
+// ceil(total_steps / DB_GRID) steps via grid-stride loop.
+// Must be large enough to saturate the GPU but small enough that
+// each block handles multiple steps (total_block_steps >= 2).
+constexpr int DB_GRID = 2048;
+
+template <int W>
+__global__ void inverse_walk_ryrz_rotation_chunk_db_kernel(
+    Complex *current, Complex *lambda, std::size_t size,
+    std::size_t chunk_start, RotationChunkCoeffs coeffs,
+    double *out_gradients) {
+    static_assert(W >= 2 && W <= static_cast<int>(ROTATION_CHUNK_MAX_WIRES),
+                  "unsupported rotation chunk width");
+
+    // Two shared-memory tile pairs (double buffer: cur_buf and nxt_buf).
+    // Shared memory budget (W=8, THREADS=256):
+    //   current_tile + lambda_tile = 2 * 2 * 256 * 16 = 16384 bytes
+    //   theta_partial + phi_partial = 2 * 256 * 8     =  4096 bytes
+    //   Total                                         ~ 20480 bytes (< 48 KiB)
+    __shared__ Complex current_tile[2][THREADS];
+    __shared__ Complex lambda_tile[2][THREADS];
+    __shared__ double theta_partial[THREADS];
+    __shared__ double phi_partial[THREADS];
+
+    // Per-thread gradient accumulators (in registers, accumulated across all steps).
+    double theta_acc[W] = {};
+    double phi_acc[W] = {};
+
+    constexpr auto tile_dim = std::size_t{1} << W;
+    // tiles_per_block: how many tiles fit in one block (256 threads / tile_dim threads per tile).
+    constexpr auto tiles_per_block =
+        static_cast<std::size_t>(THREADS) / tile_dim;
+    const auto local_thread = static_cast<std::size_t>(threadIdx.x);
+    // local_tile: which tile within the block this thread belongs to.
+    const auto local_tile = local_thread / tile_dim;
+    // local_index: this thread's position within its tile (0..tile_dim-1).
+    const auto local_index = local_thread & (tile_dim - 1);
+    const auto num_tiles = size / tile_dim;
+    // total_steps: total number of "batches" (each batch = tiles_per_block tiles).
+    const auto total_steps =
+        (num_tiles + tiles_per_block - 1) / tiles_per_block;
+    const auto low_mask = (std::size_t{1} << chunk_start) - 1;
+
+    // Helper: compute the global state index for (step, local_tile, local_index).
+    // Returns size_t(-1) if the tile is out of range.
+    auto state_idx = [&](std::size_t step) -> std::size_t {
+        const auto tile_id = step * tiles_per_block + local_tile;
+        if (tile_id >= num_tiles) {
+            return static_cast<std::size_t>(-1);
+        }
+        const auto base = (tile_id & low_mask) | ((tile_id & ~low_mask) << W);
+        return base | (local_index << chunk_start);
+    };
+
+    // Helper: load one element from global memory into shared_mem[buf].
+    // Uses plain global load; the compiler will use the read-only cache path
+    // when it can prove the pointer is const (which it is for the prefetch).
+    // If out of range, zero-fills.
+    auto load_to_smem = [&](std::size_t step, int buf) {
+        const auto sidx = state_idx(step);
+        if (sidx != static_cast<std::size_t>(-1)) {
+            current_tile[buf][local_thread] = current[sidx];
+            lambda_tile[buf][local_thread] = lambda[sidx];
+        } else {
+            current_tile[buf][local_thread] = Complex(0.0, 0.0);
+            lambda_tile[buf][local_thread] = Complex(0.0, 0.0);
+        }
+    };
+
+    // Prologue: load step 0 (this block's first step) into buf[0].
+    // The first step for this block in the grid-stride loop is blockIdx.x.
+    const std::size_t first_step = static_cast<std::size_t>(blockIdx.x);
+    if (first_step >= total_steps) {
+        return;
+    }
+    load_to_smem(first_step, 0);
+    __syncthreads();
+
+    // Grid-stride loop: this block processes steps
+    //   first_step, first_step + gridDim.x, first_step + 2*gridDim.x, ...
+    int cur_buf = 0;
+    for (std::size_t step = first_step; step < total_steps;
+         step += static_cast<std::size_t>(gridDim.x)) {
+
+        const std::size_t next_step = step + static_cast<std::size_t>(gridDim.x);
+        const int nxt_buf = 1 - cur_buf;
+
+        // --- PREFETCH: issue loads for next_step into registers BEFORE compute ---
+        // By issuing the load early, the GPU's memory unit can fetch the data
+        // from DRAM while the compute unit is busy with the current step.
+        // We use plain global loads here; the compiler will schedule them
+        // as early as possible (software pipelining / out-of-order issue).
+        Complex reg_next_current(0.0, 0.0);
+        Complex reg_next_lambda(0.0, 0.0);
+        const bool has_next = (next_step < total_steps);
+        if (has_next) {
+            const auto sidx_nxt = state_idx(next_step);
+            if (sidx_nxt != static_cast<std::size_t>(-1)) {
+                // Issue the load NOW (before compute starts).
+                // The compiler sees these loads before the heavy FMA loop below
+                // and can schedule them to overlap with computation.
+                reg_next_current = current[sidx_nxt];
+                reg_next_lambda = lambda[sidx_nxt];
+            }
+        }
+
+        // --- COMPUTE: apply inverse-walk backward for each wire (high to low) ---
+        // This is the heavy computation that hides the DRAM latency of the
+        // prefetch loads issued above.
+        const auto tile_id = step * tiles_per_block + local_tile;
+        const bool active = tile_id < num_tiles;
+
+#pragma unroll
+        for (int local_wire = W - 1; local_wire >= 0; local_wire--) {
+            const auto bit = std::size_t{1} << local_wire;
+            double theta_sum = 0.0;
+            double phi_sum = 0.0;
+
+            if (active && (local_index & bit) == 0U) {
+                const auto partner_thread = local_thread | bit;
+                inverse_walk_ryrz_backward_pair_scalar(
+                    current_tile[cur_buf], lambda_tile[cur_buf],
+                    local_thread, partner_thread,
+                    coeffs.c[local_wire], coeffs.s[local_wire],
+                    coeffs.cos_half[local_wire], coeffs.sin_half[local_wire],
+                    &theta_sum, &phi_sum);
+            }
+
+            theta_acc[local_wire] += theta_sum;
+            phi_acc[local_wire] += phi_sum;
+            // Sync so the next wire sees the updated shared-memory values.
+            __syncthreads();
+        }
+
+        // --- WRITEBACK: store computed results back to DRAM ---
+        const auto sidx = state_idx(step);
+        if (active && sidx != static_cast<std::size_t>(-1)) {
+            current[sidx] = current_tile[cur_buf][local_thread];
+            lambda[sidx] = lambda_tile[cur_buf][local_thread];
+        }
+
+        // --- SWAP: copy prefetched register data into nxt_buf ---
+        // By now, the register loads issued before compute have had time to
+        // complete (DRAM latency ~200-400 cycles, compute took many cycles).
+        // We always write nxt_buf (even when has_next is false) to keep the
+        // __syncthreads() unconditional, which is required because all threads
+        // in the block must reach the same __syncthreads() call.
+        if (has_next) {
+            const auto sidx_nxt = state_idx(next_step);
+            if (sidx_nxt != static_cast<std::size_t>(-1)) {
+                current_tile[nxt_buf][local_thread] = reg_next_current;
+                lambda_tile[nxt_buf][local_thread] = reg_next_lambda;
+            } else {
+                current_tile[nxt_buf][local_thread] = Complex(0.0, 0.0);
+                lambda_tile[nxt_buf][local_thread] = Complex(0.0, 0.0);
+            }
+        }
+        // Unconditional sync: ensures all threads have written nxt_buf before
+        // the next iteration reads from it.  Also serves as the barrier between
+        // the writeback store (above) and the next iteration's prefetch load.
+        __syncthreads();
+
+        cur_buf = nxt_buf;
+    }
+
+    // --- GRADIENT REDUCTION: reduce per-thread accumulators across the block ---
+    // One wire at a time, reusing the THREADS-element shared arrays.
+#pragma unroll
+    for (int local_wire = 0; local_wire < W; local_wire++) {
+        theta_partial[threadIdx.x] = theta_acc[local_wire];
+        phi_partial[threadIdx.x] = phi_acc[local_wire];
+        __syncthreads();
+
+        for (int stride = THREADS / 2; stride > 0; stride >>= 1) {
+            if (threadIdx.x < stride) {
+                theta_partial[threadIdx.x] += theta_partial[threadIdx.x + stride];
+                phi_partial[threadIdx.x] += phi_partial[threadIdx.x + stride];
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0) {
+            atomicAdd(out_gradients + local_wire * 2,
+                      2.0 * theta_partial[0]);
+            atomicAdd(out_gradients + local_wire * 2 + 1,
+                      2.0 * phi_partial[0]);
+        }
+        __syncthreads();
+    }
+}
+
+template <int W>
+void launch_inverse_walk_ryrz_rotation_chunk_cooperative_db(
+    Complex *current, Complex *lambda, std::size_t size,
+    std::size_t chunk_start, RotationChunkCoeffs coeffs,
+    double *out_gradients) {
+    constexpr auto tile_dim = std::size_t{1} << W;
+    constexpr auto tiles_per_block =
+        static_cast<std::size_t>(THREADS) / tile_dim;
+    const auto num_tiles = size / tile_dim;
+    const auto total_steps =
+        (num_tiles + tiles_per_block - 1) / tiles_per_block;
+    // Use a fixed grid of DB_GRID blocks so each block handles multiple steps.
+    // This ensures total_block_steps >= 2 for large qubit counts, enabling
+    // the register prefetch to actually overlap with computation.
+    const auto blocks = static_cast<int>(
+        std::min(static_cast<std::size_t>(DB_GRID), total_steps));
+    if (blocks == 0) {
+        return;
+    }
+    inverse_walk_ryrz_rotation_chunk_db_kernel<W>
+        <<<blocks, THREADS>>>(current, lambda, size, chunk_start, coeffs,
+                              out_gradients);
+    check_cuda(cudaGetLastError(),
+               "inverse_walk_ryrz_rotation_chunk_db_kernel");
+    maybe_synchronize_cuda(
+        "inverse_walk_ryrz_rotation_chunk_db_kernel sync");
+}
+
+// Public launcher: routes to the double-buffer backward kernel when requested
+void launch_inverse_walk_ryrz_rotation_chunk_db(
+    Complex *current, Complex *lambda, std::size_t size,
+    std::size_t chunk_start, std::size_t chunk_width,
+    const double *theta_ry, const double *theta_rz, double *out_gradients) {
+    if (chunk_width == 0) {
+        return;
+    }
+    if (chunk_width > ROTATION_CHUNK_MAX_WIRES) {
+        throw std::invalid_argument(
+            "inverse rotation chunk width exceeds supported maximum.");
+    }
+    if (chunk_start + chunk_width >= sizeof(std::size_t) * 8 ||
+        (std::size_t{1} << (chunk_start + chunk_width)) > size) {
+        throw std::invalid_argument(
+            "inverse rotation chunk exceeds state dimension.");
+    }
+
+    const auto coeffs = make_inverse_walk_rotation_chunk_coeffs(
+        chunk_width, theta_ry, theta_rz);
+
+    switch (chunk_width) {
+    case 2:
+        launch_inverse_walk_ryrz_rotation_chunk_cooperative_db<2>(
+            current, lambda, size, chunk_start, coeffs, out_gradients);
+        break;
+    case 3:
+        launch_inverse_walk_ryrz_rotation_chunk_cooperative_db<3>(
+            current, lambda, size, chunk_start, coeffs, out_gradients);
+        break;
+    case 4:
+        launch_inverse_walk_ryrz_rotation_chunk_cooperative_db<4>(
+            current, lambda, size, chunk_start, coeffs, out_gradients);
+        break;
+    case 5:
+        launch_inverse_walk_ryrz_rotation_chunk_cooperative_db<5>(
+            current, lambda, size, chunk_start, coeffs, out_gradients);
+        break;
+    case 6:
+        launch_inverse_walk_ryrz_rotation_chunk_cooperative_db<6>(
+            current, lambda, size, chunk_start, coeffs, out_gradients);
+        break;
+    case 7:
+        launch_inverse_walk_ryrz_rotation_chunk_cooperative_db<7>(
+            current, lambda, size, chunk_start, coeffs, out_gradients);
+        break;
+    case 8:
+        launch_inverse_walk_ryrz_rotation_chunk_cooperative_db<8>(
+            current, lambda, size, chunk_start, coeffs, out_gradients);
+        break;
+    default:
+        throw std::invalid_argument(
+            "unsupported inverse rotation chunk width for double-buffer.");
+    }
 }
 
 } // namespace detail

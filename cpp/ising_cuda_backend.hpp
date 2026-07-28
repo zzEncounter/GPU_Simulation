@@ -25,7 +25,8 @@ class RingIsingCudaBackend {
 
     RingIsingCudaBackend(std::size_t num_qubits, std::size_t num_layers,
                          double field, const std::string &gradient_strategy,
-                         std::size_t structured_rotation_chunk_width = 8);
+                         std::size_t structured_rotation_chunk_width = 8,
+                         bool double_buffer = false);
     ~RingIsingCudaBackend();
 
     RingIsingCudaBackend(const RingIsingCudaBackend &) = delete;

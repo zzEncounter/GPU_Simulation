@@ -171,10 +171,18 @@ void launch_structured_backward_ryrz_chunk(RingIsingCudaBackend::Impl &impl,
     load_structured_rotation_params(impl, params, layer, chunk, theta_ry,
                                     theta_rz);
     const auto base = structured_param_base(impl, layer, chunk.start);
-    detail::launch_inverse_walk_ryrz_rotation_chunk(
-        current, lambda, impl.state_size, chunk.start, chunk.width,
-        theta_ry.data(), theta_rz.data(),
-        impl.gate_level_gradients.get() + base);
+    if (impl.double_buffer) {
+        // Phase 3: use cooperative shared-memory double-buffer backward kernel
+        detail::launch_inverse_walk_ryrz_rotation_chunk_db(
+            current, lambda, impl.state_size, chunk.start, chunk.width,
+            theta_ry.data(), theta_rz.data(),
+            impl.gate_level_gradients.get() + base);
+    } else {
+        detail::launch_inverse_walk_ryrz_rotation_chunk(
+            current, lambda, impl.state_size, chunk.start, chunk.width,
+            theta_ry.data(), theta_rz.data(),
+            impl.gate_level_gradients.get() + base);
+    }
 }
 
 auto structured_effective_backward_chunk_width(

@@ -76,6 +76,16 @@ def parse_args() -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--double-buffer",
+        dest="double_buffer",
+        action="store_true",
+        default=DEFAULT_RUN_CONFIG.double_buffer,
+        help=(
+            "Enable shared-memory double-buffer kernels for rotation layers "
+            "(structured_adjoint only)."
+        ),
+    )
+    parser.add_argument(
         "--report-steps",
         action="store_true",
         default=DEFAULT_RUN_CONFIG.report_steps,

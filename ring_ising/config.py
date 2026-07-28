@@ -44,6 +44,7 @@ class RunConfig:
     gradient_strategy: str = "structured_adjoint"
     structured_rotation_chunk_width: int = 8
     mode2_rotation_chunk_width: int | None = None
+    double_buffer: bool = False
 
     @property
     def effective_structured_rotation_chunk_width(self) -> int:

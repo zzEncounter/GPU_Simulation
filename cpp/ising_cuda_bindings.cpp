@@ -73,10 +73,11 @@ PYBIND11_MODULE(_cuda_backend, m) {
 
     py::class_<standalone_backend::RingIsingCudaBackend>(m, "RingIsingCudaBackend")
         .def(py::init<std::size_t, std::size_t, double, const std::string &,
-                      std::size_t>(),
+                      std::size_t, bool>(),
              py::arg("num_qubits"), py::arg("num_layers"), py::arg("field"),
              py::arg("gradient_strategy") = "structured_adjoint",
-             py::arg("structured_rotation_chunk_width") = 8)
+             py::arg("structured_rotation_chunk_width") = 8,
+             py::arg("double_buffer") = false)
         .def(
             "energy_and_grad",
             [](standalone_backend::RingIsingCudaBackend &self,

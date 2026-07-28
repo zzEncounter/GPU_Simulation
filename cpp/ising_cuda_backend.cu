@@ -339,6 +339,7 @@ struct RingIsingCudaBackend::Impl {
     std::size_t num_ops;
     GradientStrategy strategy;
     std::size_t structured_rotation_chunk_width;
+    bool double_buffer;
     DeviceBuffer<Complex> current;
     DeviceBuffer<Complex> lambda;
     DeviceBuffer<Complex> scratch;
@@ -372,7 +373,8 @@ struct RingIsingCudaBackend::Impl {
 
     Impl(std::size_t num_qubits_, std::size_t num_layers_, double field_,
          const std::string &gradient_strategy_,
-         std::size_t structured_rotation_chunk_width_)
+         std::size_t structured_rotation_chunk_width_,
+         bool double_buffer_ = false)
         : num_qubits(num_qubits_), num_layers(num_layers_), field(field_),
           expected_params(num_qubits_ * num_layers_ * 2),
           state_size(validate_and_get_state_size(num_qubits_, num_layers_,
@@ -380,6 +382,7 @@ struct RingIsingCudaBackend::Impl {
           num_ops(num_layers_ * (num_qubits_ + 1)),
           strategy(parse_gradient_strategy(gradient_strategy_)),
           structured_rotation_chunk_width(structured_rotation_chunk_width_),
+          double_buffer(double_buffer_),
           current(state_size), lambda(state_size), scratch(state_size),
           gate_level_gradients(expected_params) {
         if (is_structured_adjoint_family(strategy) &&
@@ -396,6 +399,8 @@ struct RingIsingCudaBackend::Impl {
             cnot_scratch.allocate(state_size);
         }
     }
+
+    ~Impl() = default;
 };
 
 #include "ising_cuda_statevector_modes.inc"
@@ -406,10 +411,12 @@ RingIsingCudaBackend::RingIsingCudaBackend(std::size_t num_qubits,
                                            std::size_t num_layers,
                                            double field,
                                            const std::string &gradient_strategy,
-                                           std::size_t structured_rotation_chunk_width)
+                                           std::size_t structured_rotation_chunk_width,
+                                           bool double_buffer)
     : impl_(std::make_unique<Impl>(num_qubits, num_layers, field,
                                    gradient_strategy,
-                                   structured_rotation_chunk_width)) {}
+                                   structured_rotation_chunk_width,
+                                   double_buffer)) {}
 
 RingIsingCudaBackend::~RingIsingCudaBackend() = default;
 
