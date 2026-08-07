@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vqa-pennylane-lightning-baseline"
+version = "0.1.0"
+description = "PennyLane Lightning-GPU adjoint differentiation baseline for VQA/QML benchmarks"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "nvidia-ml-py>=12",
+    "pennylane==0.45.0",
+    "pennylane-lightning-gpu==0.45.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
