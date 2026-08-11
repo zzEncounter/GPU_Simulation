@@ -17,6 +17,36 @@ import numpy as np
 
 _SAD_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_LIBRARY = _SAD_ROOT / "build" / "libsad_cuda.so"
+_VARIANT_FLAGS = {
+    "f64r4_b64r4": (
+        "-DSAD_FORWARD_BLOCK_THREADS=64",
+        "-DSAD_FORWARD_REGISTER_BITS=4",
+        "-DSAD_BLOCK_THREADS=64",
+        "-DSAD_REGISTER_BITS=4",
+    ),
+    "f64r3_b64r4": (
+        "-DSAD_FORWARD_BLOCK_THREADS=64",
+        "-DSAD_FORWARD_REGISTER_BITS=3",
+        "-DSAD_BLOCK_THREADS=64",
+        "-DSAD_REGISTER_BITS=4",
+    ),
+    "f128r3_b64r4": (
+        "-DSAD_FORWARD_BLOCK_THREADS=128",
+        "-DSAD_FORWARD_REGISTER_BITS=3",
+        "-DSAD_BLOCK_THREADS=64",
+        "-DSAD_REGISTER_BITS=4",
+    ),
+    "f64r4_b128r3": (
+        "-DSAD_FORWARD_BLOCK_THREADS=64",
+        "-DSAD_FORWARD_REGISTER_BITS=4",
+        "-DSAD_BLOCK_THREADS=128",
+        "-DSAD_REGISTER_BITS=3",
+    ),
+}
+_VARIANT_LIBRARIES = {
+    name: _SAD_ROOT / "build" / f"libsad_{name}.so"
+    for name in _VARIANT_FLAGS
+}
 _MIB = 1024 * 1024
 
 
@@ -82,6 +112,8 @@ class EnergyGradResult:
     batches: int
     warmup_steps: int
     device_name: str
+    execution_mode: str
+    kernel_variant: str
 
     def __iter__(self) -> Iterator[object]:
         yield self.energy
@@ -110,6 +142,9 @@ _CIRCUITS = {
     "su2": (1, 2),
     "rzz-hea": (2, 3),
     "rzz": (2, 3),
+    "qaoa": (3, 2),
+    "xxz-hva": (4, 3),
+    "xxz": (4, 3),
 }
 
 _PRECISIONS = {
@@ -136,15 +171,34 @@ def _truthy_environment(name: str, default: bool) -> bool:
 
 
 def _build_library(library_path: Path) -> None:
-    if library_path != _DEFAULT_LIBRARY:
+    variant = next(
+        (name for name, path in _VARIANT_LIBRARIES.items()
+         if path == library_path),
+        None,
+    )
+    if library_path != _DEFAULT_LIBRARY and variant is None:
         raise RuntimeError(
             f"SAD_LIBRARY_PATH points to missing file {library_path}; custom paths "
             "cannot be auto-built"
         )
     nvcc = os.environ.get("SAD_NVCC", "/usr/local/cuda/bin/nvcc")
     cuda_arch = os.environ.get("SAD_CUDA_ARCH", "native")
+    command = [
+        "make",
+        "-C",
+        str(_SAD_ROOT),
+        f"NVCC={nvcc}",
+        f"CUDA_ARCH={cuda_arch}",
+    ]
+    if variant is not None:
+        command.extend(
+            (
+                f"TARGET=build/libsad_{variant}.so",
+                f"EXTRA_NVCCFLAGS={' '.join(_VARIANT_FLAGS[variant])}",
+            )
+        )
     completed = subprocess.run(
-        ["make", "-C", str(_SAD_ROOT), f"NVCC={nvcc}", f"CUDA_ARCH={cuda_arch}"],
+        command,
         check=False,
         capture_output=True,
         text=True,
@@ -158,10 +212,47 @@ def _build_library(library_path: Path) -> None:
         )
 
 
-@lru_cache(maxsize=1)
-def _native_library() -> ctypes.CDLL:
-    path = Path(os.environ.get("SAD_LIBRARY_PATH", _DEFAULT_LIBRARY)).expanduser()
+def _library_is_stale(path: Path) -> bool:
     if not path.exists():
+        return True
+    source_mtime = max(
+        file.stat().st_mtime
+        for pattern in ("src/**/*.cu", "src/**/*.cuh", "include/**/*.h")
+        for file in _SAD_ROOT.glob(pattern)
+    )
+    return path.stat().st_mtime < source_mtime
+
+
+def _select_library(
+    circuit_id: int, qubits: int, execution_mode: str
+) -> tuple[str, Path]:
+    explicit = os.environ.get("SAD_LIBRARY_PATH")
+    if explicit:
+        path = Path(explicit).expanduser()
+        return f"custom:{path.name}", path
+    if execution_mode != "optimized" or _truthy_environment(
+        "SAD_DISABLE_VARIANT_DISPATCH", False
+    ):
+        return "f128r2_b128r2", _DEFAULT_LIBRARY
+    if circuit_id == 0:
+        if qubits >= 28:
+            return "f64r3_b64r4", _VARIANT_LIBRARIES["f64r3_b64r4"]
+        if qubits >= 20:
+            return "f64r4_b64r4", _VARIANT_LIBRARIES["f64r4_b64r4"]
+    elif circuit_id == 1 and qubits >= 20:
+        return "f128r3_b64r4", _VARIANT_LIBRARIES["f128r3_b64r4"]
+    elif circuit_id in (2, 3):
+        if qubits >= 26:
+            return "f64r4_b128r3", _VARIANT_LIBRARIES["f64r4_b128r3"]
+        if qubits == 24:
+            return "f64r3_b64r4", _VARIANT_LIBRARIES["f64r3_b64r4"]
+    return "f128r2_b128r2", _DEFAULT_LIBRARY
+
+
+@lru_cache(maxsize=8)
+def _native_library(library_path: str) -> ctypes.CDLL:
+    path = Path(library_path)
+    if _library_is_stale(path):
         if not _truthy_environment("SAD_AUTO_BUILD", True):
             raise RuntimeError(f"SAD CUDA library not found at {path}")
         _build_library(path)
@@ -254,8 +345,10 @@ def energy_and_grad(
         circuit_id, parameters_per_qubit_layer = _CIRCUITS[circuit_key]
     except KeyError as exc:
         raise ValueError(f"unsupported circuit {circuit!r}") from exc
-    if circuit_id == 2 and qubits % 2:
-        raise ValueError("RZZ-HEA requires an even number of qubits")
+    if circuit_id in (2, 3, 4) and qubits % 2:
+        raise ValueError(f"{circuit_key} requires an even number of qubits")
+    if circuit_id in (3, 4) and qubits < 4:
+        raise ValueError(f"{circuit_key} requires at least four qubits")
 
     if not isinstance(precision, str):
         raise TypeError("precision must be a string")
@@ -264,7 +357,11 @@ def energy_and_grad(
     except KeyError as exc:
         raise ValueError(f"unsupported precision {precision!r}") from exc
 
-    parameter_count = parameters_per_qubit_layer * qubits * layers
+    parameter_count = (
+        2 * layers
+        if circuit_id == 3
+        else parameters_per_qubit_layer * qubits * layers
+    )
     rng = np.random.default_rng(random_seed)
     params = np.ascontiguousarray(
         rng.uniform(-math.pi, math.pi, parameter_count), dtype=real_dtype
@@ -277,9 +374,13 @@ def energy_and_grad(
     native_energy = ctypes.c_double()
     error_buffer = ctypes.create_string_buffer(4096)
     device = int(os.environ.get("SAD_DEVICE", "0"))
+    execution_mode = os.environ.get("SAD_EXECUTION_MODE", "optimized").strip().lower()
+    kernel_variant, library_path = _select_library(
+        circuit_id, qubits, execution_mode
+    )
     host_before = _host_rss_mib()
 
-    status = _native_library().sad_energy_and_grad(
+    status = _native_library(str(library_path)).sad_energy_and_grad(
         precision_id,
         circuit_id,
         qubits,
@@ -325,7 +426,13 @@ def energy_and_grad(
         device_total_mib=native_memory.device_total_bytes / _MIB,
     )
     step_times = forward_times + hamiltonian_times + backward_times
-    canonical_name = ("ra-hea", "su2-hea", "rzz-hea")[circuit_id]
+    canonical_name = (
+        "ra-hea",
+        "su2-hea",
+        "rzz-hea",
+        "qaoa",
+        "xxz-hva",
+    )[circuit_id]
     return EnergyGradResult(
         energy=native_energy.value,
         grad=gradient,
@@ -343,4 +450,6 @@ def energy_and_grad(
         batches=batches,
         warmup_steps=warmup_steps,
         device_name=device_name,
+        execution_mode=execution_mode,
+        kernel_variant=kernel_variant,
     )

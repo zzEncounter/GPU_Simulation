@@ -38,6 +38,27 @@ print(result.memory)
 energy, grad, step_times_s, memory = energy_and_grad(...)
 ```
 
+若要绕过 QNode、Autograd、device transforms 和逐 step tape 序列化，可调用固定版本
+Lightning wheel 暴露的低层 `lightning_gpu_ops` runner：
+
+```python
+from pennylane_lightning_baseline import native_energy_and_grad
+
+result = native_energy_and_grad(
+    circuit="su2-hea",
+    scalability=(16, 8),
+    precision="float64",
+    steps=5,
+)
+print(result.forward_times_s)
+print(result.hamiltonian_times_s)
+print(result.backward_times_s)
+```
+
+该路径预构造 circuit/observable/OpsData/GPU 对象，正式计时包含同步后的 reset、
+逐门 forward、energy、adjoint gradient 和结果回传。forward 仍然每个 gate 跨越一次
+Python/nanobind 边界，因此应称为 packaged native binding baseline，而不是纯 C++ baseline。
+
 约定：
 
 - `steps` 是正式计时次数；默认先额外 warmup 一次，因此返回的计时长度恰好等于 `steps`。
@@ -51,11 +72,23 @@ energy, grad, step_times_s, memory = energy_and_grad(...)
 
 ## 批量 benchmark
 
-默认运行 3 类电路、4/6/.../28 qubits、8 layers，并随 qubit 数增加逐步减少重复次数：
+固定 baseline 脚本运行 3 类 HEA、4/6/.../28 qubits、8 layers，并随 qubit 数增加逐步减少重复次数：
 
 ```bash
 python benchmark/benchmark_pennylane_lightning.py
 ```
 
-所有配置都位于脚本开头的全局常量中。结果逐行 flush 到 `benchmark/results/pennylane_lightning_gpu.csv`，单个配置失败也会写入 `status/error` 后继续。
+共享角 QAOA 与 XXZ-HVA 使用 `benchmark/benchmark_qaoa_xxz_pennylane.py` 单独运行，以免覆盖固定 baseline。
 
+低层 binding 的五类电路完整 sweep 与三方汇总分别使用：
+
+```bash
+python benchmark/benchmark_lightning_native.py
+python benchmark/summarize_native_comparison.py
+```
+
+结果写入 `benchmark/results/lightning_gpu_native.csv`、
+`benchmark/results/native_baseline_comparison.csv` 和根目录
+`NATIVE_BASELINE_COMPARISON.md`，不会覆盖原 QNode baseline。
+
+所有配置都位于脚本开头的全局常量中。结果逐行 flush 到 `benchmark/results/pennylane_lightning_gpu.csv`，单个配置失败也会写入 `status/error` 后继续。

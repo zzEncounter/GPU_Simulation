@@ -1,6 +1,7 @@
-"""Batch benchmark for the custom SAD CUDA adjoint implementation.
+"""Benchmark the prebuilt low-level ``lightning_gpu_ops`` baseline.
 
-Edit the global constants below; this script intentionally has no CLI arguments.
+The output is intentionally separate from the QNode Lightning-GPU baseline.
+Edit the global constants below; this script intentionally has no CLI.
 """
 
 from __future__ import annotations
@@ -9,7 +10,6 @@ import csv
 import gc
 import importlib
 import json
-import os
 import statistics
 import sys
 import traceback
@@ -27,10 +27,10 @@ LAYERS = 8
 RANDOM_SEED = 42
 BATCHES = 1
 PRECISION = "float64"
-WARMUP_STEPS = 1
-DEVICE_NAME = "sad.cuda"
-EXECUTION_MODE = "optimized"
-OUTPUT_CSV = Path(__file__).resolve().parent / "results" / "sad_optimized_gpu.csv"
+DEVICE_NAME = "lightning.gpu.ops"
+OUTPUT_CSV = (
+    Path(__file__).resolve().parent / "results" / "lightning_gpu_native.csv"
+)
 OVERWRITE_OUTPUT = True
 
 STEP_SCHEDULE = (
@@ -41,17 +41,26 @@ STEP_SCHEDULE = (
     (28, 2),
 )
 
+# Small state vectors need more warmups to settle after the preceding circuit's
+# large GPU allocations.  One 22q+ adjoint evaluation is already long enough to
+# establish steady state, so extra warmups there would add minutes to the sweep.
+WARMUP_SCHEDULE = (
+    (20, 5),
+    (28, 1),
+)
 
-SAD_PYTHON = Path(__file__).resolve().parents[1] / "sad" / "python"
-sys.path.insert(0, str(SAD_PYTHON))
-energy_and_grad = importlib.import_module("sad_baseline").energy_and_grad
+
+BASELINE_SRC = Path(__file__).resolve().parents[1] / "pennylane-lightning" / "src"
+sys.path.insert(0, str(BASELINE_SRC))
+native_energy_and_grad = importlib.import_module(
+    "pennylane_lightning_baseline"
+).native_energy_and_grad
 
 CSV_FIELDS = (
     "timestamp_utc",
     "status",
     "backend",
-    "execution_mode",
-    "kernel_variant",
+    "execution_scope",
     "circuit",
     "qubits",
     "layers",
@@ -77,11 +86,10 @@ CSV_FIELDS = (
     "hamiltonian_times_s_json",
     "backward_times_s_json",
     "step_times_s_json",
+    "gpu_before_device_mib",
+    "gpu_after_warmup_mib",
     "gpu_peak_observed_mib",
     "gpu_delta_observed_mib",
-    "state_vector_mib",
-    "total_workspace_mib",
-    "device_total_mib",
     "host_rss_before_mib",
     "host_rss_after_mib",
     "host_peak_rss_mib",
@@ -96,20 +104,28 @@ def steps_for_qubits(qubits: int) -> int:
     return STEP_SCHEDULE[-1][1]
 
 
-def _empty_row(circuit: str, qubits: int, steps: int) -> dict[str, object]:
+def warmups_for_qubits(qubits: int) -> int:
+    for maximum_qubits, warmups in WARMUP_SCHEDULE:
+        if qubits <= maximum_qubits:
+            return warmups
+    return WARMUP_SCHEDULE[-1][1]
+
+
+def _empty_row(
+    circuit: str, qubits: int, steps: int, warmup_steps: int
+) -> dict[str, object]:
     return {field: "" for field in CSV_FIELDS} | {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": "error",
         "backend": DEVICE_NAME,
-        "execution_mode": EXECUTION_MODE,
-        "kernel_variant": "",
+        "execution_scope": "prebuilt-lightning-gpu-ops-synchronized-phase-sum",
         "circuit": circuit,
         "qubits": qubits,
         "layers": LAYERS,
         "precision": PRECISION,
         "random_seed": RANDOM_SEED,
         "batches": BATCHES,
-        "warmup_steps": WARMUP_STEPS,
+        "warmup_steps": warmup_steps,
         "steps": steps,
     }
 
@@ -121,8 +137,7 @@ def _success_row(result: object, steps: int) -> dict[str, object]:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": "ok",
         "backend": result.device_name,
-        "execution_mode": result.execution_mode,
-        "kernel_variant": result.kernel_variant,
+        "execution_scope": result.execution_scope,
         "circuit": result.circuit,
         "qubits": result.qubits,
         "layers": result.layers,
@@ -148,11 +163,10 @@ def _success_row(result: object, steps: int) -> dict[str, object]:
         "hamiltonian_times_s_json": json.dumps(result.hamiltonian_times_s),
         "backward_times_s_json": json.dumps(result.backward_times_s),
         "step_times_s_json": json.dumps(times),
+        "gpu_before_device_mib": memory.gpu_before_device_mib,
+        "gpu_after_warmup_mib": memory.gpu_after_warmup_mib,
         "gpu_peak_observed_mib": memory.gpu_peak_observed_mib,
         "gpu_delta_observed_mib": memory.gpu_delta_observed_mib,
-        "state_vector_mib": memory.state_vector_mib,
-        "total_workspace_mib": memory.total_workspace_mib,
-        "device_total_mib": memory.device_total_mib,
         "host_rss_before_mib": memory.host_rss_before_mib,
         "host_rss_after_mib": memory.host_rss_after_mib,
         "host_peak_rss_mib": memory.host_peak_rss_mib,
@@ -161,7 +175,6 @@ def _success_row(result: object, steps: int) -> dict[str, object]:
 
 
 def main() -> None:
-    os.environ["SAD_EXECUTION_MODE"] = EXECUTION_MODE
     OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
     mode = "w" if OVERWRITE_OUTPUT else "a"
     needs_header = (
@@ -179,18 +192,22 @@ def main() -> None:
             for qubits in QUBITS:
                 run_index += 1
                 steps = steps_for_qubits(qubits)
+                warmup_steps = warmups_for_qubits(qubits)
                 label = f"[{run_index:02d}/{total:02d}] {circuit} {qubits}q x {LAYERS}l"
-                print(f"{label}: {steps} measured steps", flush=True)
-                row = _empty_row(circuit, qubits, steps)
+                print(
+                    f"{label}: {warmup_steps} warmups + {steps} measured steps",
+                    flush=True,
+                )
+                row = _empty_row(circuit, qubits, steps, warmup_steps)
                 try:
-                    result = energy_and_grad(
+                    result = native_energy_and_grad(
                         circuit=circuit,
                         random_seed=RANDOM_SEED,
                         scalability=(qubits, LAYERS),
                         batches=BATCHES,
                         precision=PRECISION,
                         steps=steps,
-                        warmup_steps=WARMUP_STEPS,
+                        warmup_steps=warmup_steps,
                         device_name=DEVICE_NAME,
                     )
                     row = _success_row(result, steps)

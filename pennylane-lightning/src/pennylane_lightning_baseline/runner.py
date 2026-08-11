@@ -198,7 +198,7 @@ def energy_and_grad(
             "pennylane-lightning-gpu/cuQuantum stack and verify CUDA availability"
         ) from exc
 
-    hamiltonian = build_hamiltonian(qubits)
+    hamiltonian = build_hamiltonian(qubits, circuit_spec)
 
     @qml.qnode(device, interface="autograd", diff_method="adjoint")
     def qnode(values: object) -> object:

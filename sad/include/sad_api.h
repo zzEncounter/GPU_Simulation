@@ -12,6 +12,8 @@ enum SadCircuit {
     SAD_CIRCUIT_RA_HEA = 0,
     SAD_CIRCUIT_SU2_HEA = 1,
     SAD_CIRCUIT_RZZ_HEA = 2,
+    SAD_CIRCUIT_QAOA = 3,
+    SAD_CIRCUIT_XXZ_HVA = 4,
 };
 
 enum SadPrecision {
