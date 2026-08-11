@@ -25,4 +25,5 @@ QAOA 使用环形 MaxCut cost Hamiltonian，XXZ-HVA 使用 `sum(XX+YY+0.5ZZ)`；
 - SAD 批量测试：[`benchmark/benchmark_sad.py`](benchmark/benchmark_sad.py)
 - energy/完整 gradient CSV 对比：[`benchmark/compare_sad_pennylane.py`](benchmark/compare_sad_pennylane.py)
 - 优化研究、消融与主实验：[`OPTIMIZATION_REPORT.md`](OPTIMIZATION_REPORT.md)
+- RX/RY 深入研究（mailbox、warp 连续性、persistent、backward）：[`ROTATION_OPTIMIZATION_REPORT.md`](ROTATION_OPTIMIZATION_REPORT.md)
 - native/QNode/SAD 三方计时表：[`NATIVE_BASELINE_COMPARISON.md`](NATIVE_BASELINE_COMPARISON.md)

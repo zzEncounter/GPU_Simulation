@@ -4,6 +4,42 @@
 
 namespace sad {
 
+template <typename T, NonDiagonalGate Gate>
+__host__ __device__ constexpr size_t forward_rotation_mailbox_bytes() {
+    if constexpr (kForwardWarpBits == 0) {
+        return 0;
+    } else if constexpr (kRyScalarMailbox && Gate == NonDiagonalGate::RY) {
+        return kForwardTileAmplitudes * sizeof(T);
+    } else {
+        return (kForwardTileAmplitudes / kMailboxChunks) *
+               sizeof(Complex<T>);
+    }
+}
+
+template <typename T, NonDiagonalGate Gate>
+__host__ __device__ constexpr size_t backward_rotation_mailbox_bytes() {
+    if constexpr (kWarpBits == 0) {
+        return 0;
+    } else if constexpr (kRyScalarMailbox && Gate == NonDiagonalGate::RY) {
+        return kTileAmplitudes * sizeof(T);
+    } else {
+        return (kTileAmplitudes / kMailboxChunks) * sizeof(Complex<T>);
+    }
+}
+
+__device__ inline void rotation_gradient_sum(double value,
+                                              double* reduction,
+                                              double* destination) {
+    if constexpr (kRotationWarpAtomic) {
+        value = warp_sum(value);
+        if ((threadIdx.x & 31) == 0) {
+            atomicAdd(destination, value);
+        }
+    } else {
+        block_atomic_sum(value, reduction, destination);
+    }
+}
+
 template <int TileBits>
 __device__ inline bool physical_qubit_is_selected(int qubit,
                                                    const int* selected,
@@ -51,7 +87,7 @@ template <typename T, NonDiagonalGate Gate, int Slot>
 __device__ __forceinline__ void apply_tile_gate_forward(
     Complex<T> (&values)[kForwardRegisterAmplitudes],
     RotationCoefficients<T> coefficients,
-    Complex<T>* mailbox) {
+    void* mailbox_storage) {
     static_assert(Slot >= 0 && Slot < kForwardTileBits);
     const int tid = threadIdx.x;
     const int lane = tid & 31;
@@ -79,22 +115,63 @@ __device__ __forceinline__ void apply_tile_gate_forward(
             }
         }
     } else {
-#pragma unroll
-        for (int reg = 0; reg < kForwardRegisterAmplitudes; ++reg) {
-            mailbox[tid * kForwardRegisterAmplitudes + reg] = values[reg];
-        }
-        __syncthreads();
         constexpr int warp_bit = Slot - kLaneBits - kForwardRegisterBits;
         constexpr int warp_mask = 1 << warp_bit;
         const int partner_tid = tid ^ (warp_mask << 5);
+        const int bit = (warp >> warp_bit) & 1;
+        if constexpr (kRyScalarMailbox && Gate == NonDiagonalGate::RY) {
+            auto* mailbox = reinterpret_cast<T*>(mailbox_storage);
 #pragma unroll
-        for (int reg = 0; reg < kForwardRegisterAmplitudes; ++reg) {
-            const Complex<T> partner =
-                mailbox[partner_tid * kForwardRegisterAmplitudes + reg];
-            values[reg] = rotate_amplitude<T, Gate>(
-                values[reg], partner, (warp >> warp_bit) & 1, coefficients);
+            for (int reg = 0; reg < kForwardRegisterAmplitudes; ++reg) {
+                mailbox[tid * kForwardRegisterAmplitudes + reg] =
+                    values[reg].real;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int reg = 0; reg < kForwardRegisterAmplitudes; ++reg) {
+                const T partner =
+                    mailbox[partner_tid * kForwardRegisterAmplitudes + reg];
+                values[reg].real = rotate_amplitude<T, Gate>(
+                    {values[reg].real, 0}, {partner, 0}, bit, coefficients).real;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int reg = 0; reg < kForwardRegisterAmplitudes; ++reg) {
+                mailbox[tid * kForwardRegisterAmplitudes + reg] =
+                    values[reg].imag;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int reg = 0; reg < kForwardRegisterAmplitudes; ++reg) {
+                const T partner =
+                    mailbox[partner_tid * kForwardRegisterAmplitudes + reg];
+                values[reg].imag = rotate_amplitude<T, Gate>(
+                    {values[reg].imag, 0}, {partner, 0}, bit, coefficients).real;
+            }
+            __syncthreads();
+        } else {
+            auto* mailbox = reinterpret_cast<Complex<T>*>(mailbox_storage);
+            constexpr int registers_per_chunk =
+                kForwardRegisterAmplitudes / kMailboxChunks;
+#pragma unroll
+            for (int chunk = 0; chunk < kMailboxChunks; ++chunk) {
+#pragma unroll
+                for (int offset = 0; offset < registers_per_chunk; ++offset) {
+                    const int reg = chunk * registers_per_chunk + offset;
+                    mailbox[tid * registers_per_chunk + offset] = values[reg];
+                }
+                __syncthreads();
+#pragma unroll
+                for (int offset = 0; offset < registers_per_chunk; ++offset) {
+                    const int reg = chunk * registers_per_chunk + offset;
+                    const Complex<T> partner =
+                        mailbox[partner_tid * registers_per_chunk + offset];
+                    values[reg] = rotate_amplitude<T, Gate>(
+                        values[reg], partner, bit, coefficients);
+                }
+                __syncthreads();
+            }
         }
-        __syncthreads();
     }
 }
 
@@ -104,7 +181,7 @@ __device__ __forceinline__ void apply_tile_gate_backward(
     Complex<T> (&lambda)[kRegisterAmplitudes],
     RotationCoefficients<T> coefficients,
     bool active,
-    Complex<T>* mailbox,
+    void* mailbox_storage,
     double* reduction,
     double* gradient) {
     static_assert(Slot >= 0 && Slot < kTileBits);
@@ -123,7 +200,7 @@ __device__ __forceinline__ void apply_tile_gate_backward(
                     lambda[reg], partner, (lane >> Slot) & 1);
             }
         }
-        block_atomic_sum(local_overlap, reduction, gradient);
+        rotation_gradient_sum(local_overlap, reduction, gradient);
         const RotationCoefficients<T> inverse_coefficients{
             -coefficients.sine, coefficients.cosine};
 #pragma unroll
@@ -147,7 +224,7 @@ __device__ __forceinline__ void apply_tile_gate_backward(
                     (reg >> register_bit) & 1);
             }
         }
-        block_atomic_sum(local_overlap, reduction, gradient);
+        rotation_gradient_sum(local_overlap, reduction, gradient);
         const RotationCoefficients<T> inverse_coefficients{
             -coefficients.sine, coefficients.cosine};
 #pragma unroll
@@ -169,47 +246,131 @@ __device__ __forceinline__ void apply_tile_gate_backward(
             }
         }
     } else {
-#pragma unroll
-        for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
-            mailbox[tid * kRegisterAmplitudes + reg] = phi[reg];
-        }
-        __syncthreads();
         constexpr int warp_bit = Slot - kLaneBits - kRegisterBits;
         const int partner_tid = tid ^ ((1 << warp_bit) << 5);
-#pragma unroll
-        for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
-            if (active) {
-                const Complex<T> partner =
-                    mailbox[partner_tid * kRegisterAmplitudes + reg];
-                local_overlap += generator_overlap<T, Gate>(
-                    lambda[reg], partner, (warp >> warp_bit) & 1);
-            }
-        }
+        const int bit = (warp >> warp_bit) & 1;
         const RotationCoefficients<T> inverse_coefficients{
             -coefficients.sine, coefficients.cosine};
+        if constexpr (kRyScalarMailbox && Gate == NonDiagonalGate::RY) {
+            auto* mailbox = reinterpret_cast<T*>(mailbox_storage);
 #pragma unroll
-        for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
-            const Complex<T> phi_partner =
-                mailbox[partner_tid * kRegisterAmplitudes + reg];
-            phi[reg] = rotate_amplitude<T, Gate>(
-                phi[reg], phi_partner, (warp >> warp_bit) & 1,
-                inverse_coefficients);
-        }
-        block_atomic_sum(local_overlap, reduction, gradient);
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                mailbox[tid * kRegisterAmplitudes + reg] = phi[reg].real;
+            }
+            __syncthreads();
 #pragma unroll
-        for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
-            mailbox[tid * kRegisterAmplitudes + reg] = lambda[reg];
-        }
-        __syncthreads();
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                const T partner =
+                    mailbox[partner_tid * kRegisterAmplitudes + reg];
+                if (active) {
+                    local_overlap += generator_overlap<T, Gate>(
+                        {lambda[reg].real, 0}, {partner, 0}, bit);
+                }
+                phi[reg].real = rotate_amplitude<T, Gate>(
+                    {phi[reg].real, 0}, {partner, 0}, bit,
+                    inverse_coefficients).real;
+            }
+            __syncthreads();
 #pragma unroll
-        for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
-            const Complex<T> lambda_partner =
-                mailbox[partner_tid * kRegisterAmplitudes + reg];
-            lambda[reg] = rotate_amplitude<T, Gate>(
-                lambda[reg], lambda_partner, (warp >> warp_bit) & 1,
-                inverse_coefficients);
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                mailbox[tid * kRegisterAmplitudes + reg] = phi[reg].imag;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                const T partner =
+                    mailbox[partner_tid * kRegisterAmplitudes + reg];
+                if (active) {
+                    local_overlap += generator_overlap<T, Gate>(
+                        {0, lambda[reg].imag}, {0, partner}, bit);
+                }
+                phi[reg].imag = rotate_amplitude<T, Gate>(
+                    {phi[reg].imag, 0}, {partner, 0}, bit,
+                    inverse_coefficients).real;
+            }
+            rotation_gradient_sum(local_overlap, reduction, gradient);
+            if constexpr (kRotationWarpAtomic) {
+                __syncthreads();
+            }
+#pragma unroll
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                mailbox[tid * kRegisterAmplitudes + reg] = lambda[reg].real;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                const T partner =
+                    mailbox[partner_tid * kRegisterAmplitudes + reg];
+                lambda[reg].real = rotate_amplitude<T, Gate>(
+                    {lambda[reg].real, 0}, {partner, 0}, bit,
+                    inverse_coefficients).real;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                mailbox[tid * kRegisterAmplitudes + reg] = lambda[reg].imag;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                const T partner =
+                    mailbox[partner_tid * kRegisterAmplitudes + reg];
+                lambda[reg].imag = rotate_amplitude<T, Gate>(
+                    {lambda[reg].imag, 0}, {partner, 0}, bit,
+                    inverse_coefficients).real;
+            }
+            __syncthreads();
+        } else {
+            auto* mailbox = reinterpret_cast<Complex<T>*>(mailbox_storage);
+            constexpr int registers_per_chunk =
+                kRegisterAmplitudes / kMailboxChunks;
+#pragma unroll
+            for (int chunk = 0; chunk < kMailboxChunks; ++chunk) {
+#pragma unroll
+                for (int offset = 0; offset < registers_per_chunk; ++offset) {
+                    const int reg = chunk * registers_per_chunk + offset;
+                    mailbox[tid * registers_per_chunk + offset] = phi[reg];
+                }
+                __syncthreads();
+#pragma unroll
+                for (int offset = 0; offset < registers_per_chunk; ++offset) {
+                    const int reg = chunk * registers_per_chunk + offset;
+                    const Complex<T> partner =
+                        mailbox[partner_tid * registers_per_chunk + offset];
+                    if (active) {
+                        local_overlap += generator_overlap<T, Gate>(
+                            lambda[reg], partner, bit);
+                    }
+                    phi[reg] = rotate_amplitude<T, Gate>(
+                        phi[reg], partner, bit, inverse_coefficients);
+                }
+                if (chunk + 1 < kMailboxChunks) {
+                    __syncthreads();
+                }
+            }
+            rotation_gradient_sum(local_overlap, reduction, gradient);
+            if constexpr (kRotationWarpAtomic) {
+                __syncthreads();
+            }
+#pragma unroll
+            for (int chunk = 0; chunk < kMailboxChunks; ++chunk) {
+#pragma unroll
+                for (int offset = 0; offset < registers_per_chunk; ++offset) {
+                    const int reg = chunk * registers_per_chunk + offset;
+                    mailbox[tid * registers_per_chunk + offset] = lambda[reg];
+                }
+                __syncthreads();
+#pragma unroll
+                for (int offset = 0; offset < registers_per_chunk; ++offset) {
+                    const int reg = chunk * registers_per_chunk + offset;
+                    const Complex<T> partner =
+                        mailbox[partner_tid * registers_per_chunk + offset];
+                    lambda[reg] = rotate_amplitude<T, Gate>(
+                        lambda[reg], partner, bit, inverse_coefficients);
+                }
+                __syncthreads();
+            }
         }
-        __syncthreads();
     }
 }
 
@@ -220,7 +381,7 @@ __device__ __forceinline__ void apply_phase_forward(
     int parameter_offset,
     const int* selected,
     int target_mask,
-    Complex<T>* mailbox) {
+    void* mailbox) {
 #define SAD_ROTATION_PARAMETER(slot) \
     (parameter_offset + (SharedParameter ? 0 : selected[slot]))
     if (target_mask & (1 << 0))
@@ -244,9 +405,11 @@ __device__ __forceinline__ void apply_phase_forward(
     if (target_mask & (1 << 6))
         apply_tile_gate_forward<T, Gate, 6>(
             values, coefficients[SAD_ROTATION_PARAMETER(6)], mailbox);
-    if (target_mask & (1 << 7))
-        apply_tile_gate_forward<T, Gate, 7>(
-            values, coefficients[SAD_ROTATION_PARAMETER(7)], mailbox);
+    if constexpr (kForwardTileBits > 7) {
+        if (target_mask & (1 << 7))
+            apply_tile_gate_forward<T, Gate, 7>(
+                values, coefficients[SAD_ROTATION_PARAMETER(7)], mailbox);
+    }
     if constexpr (kForwardTileBits > 8) {
         if (target_mask & (1 << 8))
             apply_tile_gate_forward<T, Gate, 8>(
@@ -280,7 +443,7 @@ __device__ __forceinline__ void apply_phase_backward(
     const int* selected,
     int target_mask,
     bool active,
-    Complex<T>* mailbox,
+    void* mailbox,
     double* reduction) {
 #define SAD_APPLY_BACKWARD_SLOT(slot)                                                   \
     if (target_mask & (1 << slot))                                                     \
@@ -304,7 +467,9 @@ __device__ __forceinline__ void apply_phase_backward(
     if constexpr (kTileBits > 8) {
         SAD_APPLY_BACKWARD_SLOT(8);
     }
-    SAD_APPLY_BACKWARD_SLOT(7);
+    if constexpr (kTileBits > 7) {
+        SAD_APPLY_BACKWARD_SLOT(7);
+    }
     SAD_APPLY_BACKWARD_SLOT(6);
     SAD_APPLY_BACKWARD_SLOT(5);
     SAD_APPLY_BACKWARD_SLOT(4);

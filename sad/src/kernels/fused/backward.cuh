@@ -186,9 +186,16 @@ __global__ void fused_non_diagonal_backward_kernel(
     const int* selected_maps,
     const int* target_masks,
     int phase_count,
-    bool reverse_phases) {
+    bool reverse_phases,
+    int single_phase_index,
+    bool first_call) {
+#if SAD_ROTATION_PERSISTENT
     cg::grid_group grid = cg::this_grid();
-    __shared__ Complex<T> mailbox[kTileAmplitudes];
+#endif
+    constexpr size_t kMailboxBytes =
+        backward_rotation_mailbox_bytes<T, Gate>();
+    __shared__ __align__(16)
+        unsigned char mailbox[kMailboxBytes == 0 ? 16 : kMailboxBytes];
     __shared__ double reduction[kBlockThreads];
     __shared__ double diagonal_warp_partials[
         (2 * kTileBits + 1) * kWarpsPerBlock];
@@ -202,7 +209,9 @@ __global__ void fused_non_diagonal_backward_kernel(
 
     for (int step = 0; step < phase_count; ++step) {
         const int phase = reverse_phases ? step : phase_count - 1 - step;
-        const bool first_phase = step == 0;
+        const int logical_phase =
+            single_phase_index >= 0 ? single_phase_index : phase;
+        const bool first_phase = first_call && step == 0;
         const int* selected = selected_maps + phase * kTileBits;
         for (uint64_t tile = blockIdx.x; tile < tile_count;
              tile += gridDim.x) {
@@ -262,7 +271,7 @@ __global__ void fused_non_diagonal_backward_kernel(
                 tile_base,
                 selected,
                 target_masks[phase],
-                phase,
+                logical_phase,
                 tile_bits,
                 qubits,
                 rz_parameter_offset,
@@ -303,7 +312,9 @@ __global__ void fused_non_diagonal_backward_kernel(
             __syncthreads();
         }
         if (step + 1 < phase_count) {
+#if SAD_ROTATION_PERSISTENT
             grid.sync();
+#endif
         }
     }
 }
@@ -344,30 +355,64 @@ void launch_fused_non_diagonal_backward(
     const Complex<T>* lambda_input = lambda->current;
     Complex<T>* phi_output = phi->scratch;
     Complex<T>* lambda_output = lambda->scratch;
-    void* arguments[] = {
-        const_cast<Complex<T>**>(&phi_input),
-        const_cast<Complex<T>**>(&lambda_input),
-        &phi_output,
-        &lambda_output,
-        const_cast<RotationCoefficients<T>**>(&coefficients),
-        &gradients,
-        &qubits,
-        &rotation_parameter_offset,
-        &rz_parameter_offset,
-        &rzz_even_parameter_offset,
-        &rzz_odd_parameter_offset,
-        const_cast<Complex<T>**>(&rz_lookup),
-        const_cast<Complex<T>**>(&rzz_even_lookup),
-        const_cast<Complex<T>**>(&rzz_odd_lookup),
-        const_cast<int**>(&selected_maps),
-        const_cast<int**>(&target_masks),
-        &phase_count,
-        &reverse_phases};
-    SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
-        reinterpret_cast<const void*>(kernel),
-        dim3(grid_size),
-        dim3(kBlockThreads),
-        arguments));
+    if constexpr (kRotationPersistent) {
+        int single_phase_index = -1;
+        bool first_call = true;
+        void* arguments[] = {
+            const_cast<Complex<T>**>(&phi_input),
+            const_cast<Complex<T>**>(&lambda_input),
+            &phi_output,
+            &lambda_output,
+            const_cast<RotationCoefficients<T>**>(&coefficients),
+            &gradients,
+            &qubits,
+            &rotation_parameter_offset,
+            &rz_parameter_offset,
+            &rzz_even_parameter_offset,
+            &rzz_odd_parameter_offset,
+            const_cast<Complex<T>**>(&rz_lookup),
+            const_cast<Complex<T>**>(&rzz_even_lookup),
+            const_cast<Complex<T>**>(&rzz_odd_lookup),
+            const_cast<int**>(&selected_maps),
+            const_cast<int**>(&target_masks),
+            &phase_count,
+            &reverse_phases,
+            &single_phase_index,
+            &first_call};
+        SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
+            reinterpret_cast<const void*>(kernel),
+            dim3(grid_size),
+            dim3(kBlockThreads),
+            arguments));
+    } else {
+        const int ordinary_grid_size = static_cast<int>(tile_count);
+        for (int step = 0; step < phase_count; ++step) {
+            const int phase = reverse_phases ? step : phase_count - 1 - step;
+            const bool first_call = step == 0;
+            kernel<<<ordinary_grid_size, kBlockThreads>>>(
+                phi_input,
+                lambda_input,
+                phi_output,
+                lambda_output,
+                coefficients,
+                gradients,
+                qubits,
+                rotation_parameter_offset,
+                rz_parameter_offset,
+                rzz_even_parameter_offset,
+                rzz_odd_parameter_offset,
+                rz_lookup,
+                rzz_even_lookup,
+                rzz_odd_lookup,
+                selected_maps + phase * kTileBits,
+                target_masks + phase,
+                1,
+                reverse_phases,
+                phase,
+                first_call);
+        }
+        SAD_CUDA_CHECK(cudaGetLastError());
+    }
     phi->swap();
     lambda->swap();
 }

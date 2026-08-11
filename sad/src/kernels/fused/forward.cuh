@@ -26,10 +26,14 @@ __global__ void fused_non_diagonal_forward_kernel(
     const int* selected_maps,
     const int* target_masks,
     int phase_count,
-    bool reverse_phases) {
+    bool reverse_phases,
+    bool first_call,
+    bool final_call) {
+#if SAD_ROTATION_PERSISTENT
     cg::grid_group grid = cg::this_grid();
+#endif
     extern __shared__ __align__(16) unsigned char dynamic_shared[];
-    auto* mailbox = reinterpret_cast<Complex<T>*>(dynamic_shared);
+    void* mailbox = dynamic_shared;
     __shared__ uint64_t tile_base;
 
     const int tile_bits = min(qubits, kForwardTileBits);
@@ -40,7 +44,8 @@ __global__ void fused_non_diagonal_forward_kernel(
 
     for (int step = 0; step < phase_count; ++step) {
         const int phase = reverse_phases ? phase_count - 1 - step : step;
-        const bool final_phase = step + 1 == phase_count;
+        const bool first_phase = first_call && step == 0;
+        const bool final_phase = final_call && step + 1 == phase_count;
         const int* selected = selected_maps + phase * kForwardTileBits;
         for (uint64_t tile = blockIdx.x; tile < tile_count;
              tile += gridDim.x) {
@@ -66,7 +71,7 @@ __global__ void fused_non_diagonal_forward_kernel(
                     active ? state[index] : make_complex<T>(0, 0);
                 if constexpr (DiagonalBefore &&
                               Mode != FusedDiagonalMode::NONE) {
-                    if (active && step == 0) {
+                    if (active && first_phase) {
                         values[reg] = multiply(
                             values[reg],
                             fused_diagonal_factor<T, Mode>(
@@ -124,7 +129,9 @@ __global__ void fused_non_diagonal_forward_kernel(
             __syncthreads();
         }
         if (!final_phase) {
+#if SAD_ROTATION_PERSISTENT
             grid.sync();
+#endif
         }
     }
 }
@@ -157,11 +164,13 @@ void launch_fused_non_diagonal_forward(
                                           DiagonalBefore,
                                           SharedParameter>;
     constexpr size_t shared_bytes =
-        kForwardTileAmplitudes * sizeof(Complex<T>);
-    SAD_CUDA_CHECK(cudaFuncSetAttribute(
-        kernel,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        static_cast<int>(shared_bytes)));
+        forward_rotation_mailbox_bytes<T, Gate>();
+    if constexpr (shared_bytes > 0) {
+        SAD_CUDA_CHECK(cudaFuncSetAttribute(
+            kernel,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            static_cast<int>(shared_bytes)));
+    }
     int blocks_per_multiprocessor = 0;
     SAD_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
         &blocks_per_multiprocessor,
@@ -174,25 +183,56 @@ void launch_fused_non_diagonal_forward(
         static_cast<int>(std::min<uint64_t>(tile_count, resident_blocks));
     Complex<T>* state = phi->current;
     Complex<T>* output = ScatterCnot ? phi->scratch : phi->current;
-    void* arguments[] = {
-        &state,
-        &output,
-        const_cast<RotationCoefficients<T>**>(&coefficients),
-        &qubits,
-        &parameter_offset,
-        const_cast<Complex<T>**>(&rz_lookup),
-        const_cast<Complex<T>**>(&rzz_even_lookup),
-        const_cast<Complex<T>**>(&rzz_odd_lookup),
-        const_cast<int**>(&selected_maps),
-        const_cast<int**>(&target_masks),
-        &phase_count,
-        &reverse_phases};
-    SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
-        reinterpret_cast<const void*>(kernel),
-        dim3(grid_size),
-        dim3(kForwardBlockThreads),
-        arguments,
-        shared_bytes));
+    if constexpr (kRotationPersistent) {
+        bool first_call = true;
+        bool final_call = true;
+        void* arguments[] = {
+            &state,
+            &output,
+            const_cast<RotationCoefficients<T>**>(&coefficients),
+            &qubits,
+            &parameter_offset,
+            const_cast<Complex<T>**>(&rz_lookup),
+            const_cast<Complex<T>**>(&rzz_even_lookup),
+            const_cast<Complex<T>**>(&rzz_odd_lookup),
+            const_cast<int**>(&selected_maps),
+            const_cast<int**>(&target_masks),
+            &phase_count,
+            &reverse_phases,
+            &first_call,
+            &final_call};
+        SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
+            reinterpret_cast<const void*>(kernel),
+            dim3(grid_size),
+            dim3(kForwardBlockThreads),
+            arguments,
+            shared_bytes));
+    } else {
+        const int ordinary_grid_size = static_cast<int>(tile_count);
+        for (int step = 0; step < phase_count; ++step) {
+            const int phase = reverse_phases ? phase_count - 1 - step : step;
+            const bool first_call = step == 0;
+            const bool final_call = step + 1 == phase_count;
+            kernel<<<ordinary_grid_size,
+                     kForwardBlockThreads,
+                     shared_bytes>>>(state,
+                                     output,
+                                     coefficients,
+                                     qubits,
+                                     parameter_offset,
+                                     rz_lookup,
+                                     rzz_even_lookup,
+                                     rzz_odd_lookup,
+                                     selected_maps +
+                                         phase * kForwardTileBits,
+                                     target_masks + phase,
+                                     1,
+                                     false,
+                                     first_call,
+                                     final_call);
+        }
+        SAD_CUDA_CHECK(cudaGetLastError());
+    }
     if constexpr (ScatterCnot) {
         phi->swap();
     }

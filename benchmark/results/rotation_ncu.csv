@@ -1,0 +1,5 @@
+variant,direction,qubits,gate,layout,dram_bytes_gb,shared_load_wavefronts,shared_store_wavefronts,shared_load_bank_conflicts,shared_store_bank_conflicts,smsp_cycles_active_avg,barrier_stall_pct,long_scoreboard_stall_pct,mio_throttle_stall_pct
+128x4-full,forward,24,ry,full-fixed,2.65,76964097,76176167,56775454,56698886,10803711.18,45.98,24.38,0.81
+128x4-full,backward,24,ry,full-fixed,5.36,170395556,167147043,113246208,113246208,26778626.05,38.45,10.68,0.87
+32x16-no-mailbox,forward,24,ry,full-fixed,2.64,2806344,169949,21048,652,10264814.04,0.20,48.20,2.41
+32x16-no-mailbox,backward,24,ry,full-fixed,5.36,11538710,5772681,102675,37225,22486958.04,1.36,25.94,0.52

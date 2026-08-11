@@ -15,11 +15,55 @@ using namespace sad;
 #define SAD_MICRO_ITERATIONS 50
 #endif
 
+bool build_pair_contiguous_phase_maps(int qubits,
+                                      int tile_bits,
+                                      int register_bits,
+                                      std::vector<int>* selected,
+                                      std::vector<int>* target_masks) {
+    const int warp_bits = tile_bits - kLaneBits - register_bits;
+    if (warp_bits < 1 || qubits < kLaneBits + 1) return false;
+    const int high_capacity = tile_bits - (kLaneBits + 1);
+    if (high_capacity < 1) return false;
+    const int remaining = std::max(0, qubits - tile_bits);
+    const int phase_count =
+        1 + (remaining + high_capacity - 1) / high_capacity;
+    selected->assign(phase_count * tile_bits, -1);
+    target_masks->assign(phase_count, 0);
+
+    const int first_count = std::min(qubits, tile_bits);
+    for (int slot = 0; slot < first_count; ++slot) {
+        (*selected)[slot] = slot;
+        (*target_masks)[0] |= 1 << slot;
+    }
+    for (int phase = 1; phase < phase_count; ++phase) {
+        const int base = phase * tile_bits;
+        for (int lane = 0; lane < kLaneBits; ++lane) {
+            (*selected)[base + lane] = lane;
+        }
+        const int first_warp_slot = kLaneBits + register_bits;
+        (*selected)[base + first_warp_slot] = kLaneBits;
+        int target = tile_bits + (phase - 1) * high_capacity;
+        for (int slot = kLaneBits;
+             slot < kLaneBits + register_bits && target < qubits;
+             ++slot, ++target) {
+            (*selected)[base + slot] = target;
+            (*target_masks)[phase] |= 1 << slot;
+        }
+        for (int slot = first_warp_slot + 1;
+             slot < tile_bits && target < qubits;
+             ++slot, ++target) {
+            (*selected)[base + slot] = target;
+            (*target_masks)[phase] |= 1 << slot;
+        }
+    }
+    return true;
+}
+
 int main(int argc, char** argv) {
     if (argc != 5 && argc != 6) {
         std::fprintf(stderr,
                      "usage: %s QUBITS rx|ry low|high|range:FIRST|fixed|"
-                     "fixed:FIRST|sequence:N,N,...|full|full-fixed "
+                     "fixed:FIRST|sequence:N,N,...|full|full-fixed|full-pairs "
                      "forward|backward [all|none|lane|register|warp|COUNT]\n",
                      argv[0]);
         return 2;
@@ -46,6 +90,11 @@ int main(int argc, char** argv) {
             layout == "full-fixed",
             &selected,
             &target_masks);
+    } else if (layout == "full-pairs") {
+        if (!build_pair_contiguous_phase_maps(
+                qubits, tile_bits, register_bits, &selected, &target_masks)) {
+            return 2;
+        }
     } else if (layout.rfind("sequence:", 0) == 0) {
         std::vector<int> counts;
         std::stringstream stream(layout.substr(9));
@@ -206,14 +255,18 @@ int main(int argc, char** argv) {
     cudaFuncAttributes attributes{};
     int active_blocks = 0;
     size_t dynamic_shared_bytes = 0;
+    size_t mailbox_bytes = 0;
     if (direction == "forward") {
-        dynamic_shared_bytes =
-            kForwardTileAmplitudes * sizeof(Complex<double>);
         if (gate == "rx") {
-            SAD_CUDA_CHECK(cudaFuncSetAttribute(
-                non_diagonal_forward_kernel<double, NonDiagonalGate::RX>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                static_cast<int>(dynamic_shared_bytes)));
+            dynamic_shared_bytes =
+                forward_rotation_mailbox_bytes<double, NonDiagonalGate::RX>();
+            mailbox_bytes = dynamic_shared_bytes;
+            if (dynamic_shared_bytes > 0) {
+                SAD_CUDA_CHECK(cudaFuncSetAttribute(
+                    non_diagonal_forward_kernel<double, NonDiagonalGate::RX>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    static_cast<int>(dynamic_shared_bytes)));
+            }
             SAD_CUDA_CHECK(cudaFuncGetAttributes(
                 &attributes,
                 non_diagonal_forward_kernel<double, NonDiagonalGate::RX>));
@@ -223,10 +276,15 @@ int main(int argc, char** argv) {
                 kForwardBlockThreads,
                 dynamic_shared_bytes));
         } else {
-            SAD_CUDA_CHECK(cudaFuncSetAttribute(
-                non_diagonal_forward_kernel<double, NonDiagonalGate::RY>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                static_cast<int>(dynamic_shared_bytes)));
+            dynamic_shared_bytes =
+                forward_rotation_mailbox_bytes<double, NonDiagonalGate::RY>();
+            mailbox_bytes = dynamic_shared_bytes;
+            if (dynamic_shared_bytes > 0) {
+                SAD_CUDA_CHECK(cudaFuncSetAttribute(
+                    non_diagonal_forward_kernel<double, NonDiagonalGate::RY>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    static_cast<int>(dynamic_shared_bytes)));
+            }
             SAD_CUDA_CHECK(cudaFuncGetAttributes(
                 &attributes,
                 non_diagonal_forward_kernel<double, NonDiagonalGate::RY>));
@@ -239,6 +297,8 @@ int main(int argc, char** argv) {
     }
 #ifndef SAD_MICRO_FORWARD_ONLY
     else if (gate == "rx") {
+        mailbox_bytes =
+            backward_rotation_mailbox_bytes<double, NonDiagonalGate::RX>();
         SAD_CUDA_CHECK(cudaFuncGetAttributes(
             &attributes,
             non_diagonal_backward_gradient_kernel<double,
@@ -250,6 +310,8 @@ int main(int argc, char** argv) {
             kBlockThreads,
             0));
     } else {
+        mailbox_bytes =
+            backward_rotation_mailbox_bytes<double, NonDiagonalGate::RY>();
         SAD_CUDA_CHECK(cudaFuncGetAttributes(
             &attributes,
             non_diagonal_backward_gradient_kernel<double,
@@ -341,7 +403,8 @@ int main(int argc, char** argv) {
     const std::string measured_layout =
         target_spec == "all" ? layout : layout + ":" + target_spec;
     std::printf(
-        "%s,%s,%s,%d,%d,%d,%d,%zu,%d,%d,%zu,%zu,%d,%.9f,%.9f\n",
+        "%s,%s,%s,%d,%d,%d,%d,%zu,%d,%d,%zu,%zu,%d,%.9f,%.9f,"
+        "%zu,%d,%d,%d,%d\n",
                 gate.c_str(),
                 measured_layout.c_str(),
                 direction.c_str(),
@@ -358,7 +421,12 @@ int main(int argc, char** argv) {
                 dynamic_shared_bytes,
                 active_blocks,
                 average_ms,
-                per_gate_ms);
+                per_gate_ms,
+                mailbox_bytes,
+                kMailboxChunks,
+                kRyScalarMailbox ? 1 : 0,
+                kRotationPersistent ? 1 : 0,
+                kLegacyBlockReduction ? 1 : 0);
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);

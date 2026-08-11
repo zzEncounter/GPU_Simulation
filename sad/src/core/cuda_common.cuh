@@ -39,6 +39,21 @@ namespace sad {
 #ifndef SAD_DIAGONAL_LOOKUP_BITS
 #define SAD_DIAGONAL_LOOKUP_BITS 8
 #endif
+#ifndef SAD_MAILBOX_CHUNKS
+#define SAD_MAILBOX_CHUNKS 1
+#endif
+#ifndef SAD_RY_SCALAR_MAILBOX
+#define SAD_RY_SCALAR_MAILBOX 0
+#endif
+#ifndef SAD_ROTATION_PERSISTENT
+#define SAD_ROTATION_PERSISTENT 0
+#endif
+#ifndef SAD_LEGACY_BLOCK_REDUCTION
+#define SAD_LEGACY_BLOCK_REDUCTION 1
+#endif
+#ifndef SAD_ROTATION_WARP_ATOMIC
+#define SAD_ROTATION_WARP_ATOMIC 0
+#endif
 
 constexpr int exact_log2(int value) {
     return value == 1 ? 0 : 1 + exact_log2(value / 2);
@@ -79,13 +94,20 @@ __host__ __device__ constexpr int target_phase_for_qubit(
 constexpr int kMaxQubits = 30;
 constexpr int kDiagonalLookupBits = SAD_DIAGONAL_LOOKUP_BITS;
 constexpr int kDiagonalLookupSize = 1 << kDiagonalLookupBits;
+constexpr int kMailboxChunks = SAD_MAILBOX_CHUNKS;
+constexpr bool kRyScalarMailbox = SAD_RY_SCALAR_MAILBOX != 0;
+constexpr bool kRotationPersistent = SAD_ROTATION_PERSISTENT != 0;
+constexpr bool kLegacyBlockReduction = SAD_LEGACY_BLOCK_REDUCTION != 0;
+constexpr bool kRotationWarpAtomic = SAD_ROTATION_WARP_ATOMIC != 0;
 
-static_assert(kBlockThreads == 64 || kBlockThreads == 128 ||
+static_assert(kBlockThreads == 32 || kBlockThreads == 64 ||
+              kBlockThreads == 128 ||
               kBlockThreads == 256 || kBlockThreads == 512);
 static_assert(kWarpsPerBlock == (1 << kWarpBits));
 static_assert(kRegisterBits >= 2 && kRegisterBits <= 6);
 static_assert(kTileBits <= 12);
-static_assert(kForwardBlockThreads == 64 || kForwardBlockThreads == 128 ||
+static_assert(kForwardBlockThreads == 32 || kForwardBlockThreads == 64 ||
+              kForwardBlockThreads == 128 ||
               kForwardBlockThreads == 256 || kForwardBlockThreads == 512);
 static_assert(kForwardWarpsPerBlock == (1 << kForwardWarpBits));
 static_assert(kForwardRegisterBits >= 2 && kForwardRegisterBits <= 6);
@@ -95,6 +117,12 @@ static_assert(kOrdinaryBlockThreads == 64 ||
               kOrdinaryBlockThreads == 256 ||
               kOrdinaryBlockThreads == 512);
 static_assert(kDiagonalLookupBits >= 1 && kDiagonalLookupBits <= 12);
+static_assert(kMailboxChunks == 1 || kMailboxChunks == 2 ||
+              kMailboxChunks == 4 || kMailboxChunks == 8 ||
+              kMailboxChunks == 16 || kMailboxChunks == 32 ||
+              kMailboxChunks == 64);
+static_assert(kRegisterAmplitudes % kMailboxChunks == 0);
+static_assert(kForwardRegisterAmplitudes % kMailboxChunks == 0);
 
 enum class NonDiagonalGate : int { RX = 0, RY = 1 };
 enum class DiagonalGate : int { RZ = 0, RZZ_EVEN = 1, RZZ_ODD = 2 };
@@ -223,18 +251,36 @@ __device__ inline void block_atomic_sum(double value,
                                          double* reduction,
                                          double* destination) {
     const int tid = threadIdx.x;
-    reduction[tid] = value;
-    __syncthreads();
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            reduction[tid] += reduction[tid + stride];
+    if constexpr (kLegacyBlockReduction) {
+        reduction[tid] = value;
+        __syncthreads();
+        for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                reduction[tid] += reduction[tid + stride];
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            atomicAdd(destination, reduction[0]);
+        }
+        __syncthreads();
+    } else {
+        const int lane = tid & 31;
+        const int warp = tid >> 5;
+        value = warp_sum(value);
+        if (lane == 0) {
+            reduction[warp] = value;
+        }
+        __syncthreads();
+        if (warp == 0) {
+            value = lane < blockDim.x / 32 ? reduction[lane] : 0.0;
+            value = warp_sum(value);
+            if (lane == 0) {
+                atomicAdd(destination, value);
+            }
         }
         __syncthreads();
     }
-    if (tid == 0) {
-        atomicAdd(destination, reduction[0]);
-    }
-    __syncthreads();
 }
 
 

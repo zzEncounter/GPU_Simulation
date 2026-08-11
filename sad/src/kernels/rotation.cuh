@@ -15,9 +15,11 @@ __global__ void non_diagonal_forward_kernel(Complex<T>* state,
                                             const int* target_masks,
                                             int phase_count,
                                             bool reverse_phases) {
+#if SAD_ROTATION_PERSISTENT
     cg::grid_group grid = cg::this_grid();
+#endif
     extern __shared__ __align__(16) unsigned char dynamic_shared[];
-    auto* mailbox = reinterpret_cast<Complex<T>*>(dynamic_shared);
+    void* mailbox = dynamic_shared;
     __shared__ uint64_t tile_base;
 
     const int tile_bits = min(qubits, kForwardTileBits);
@@ -70,7 +72,9 @@ __global__ void non_diagonal_forward_kernel(Complex<T>* state,
             }
             __syncthreads();
         }
+#if SAD_ROTATION_PERSISTENT
         grid.sync();
+#endif
     }
 }
 
@@ -85,8 +89,13 @@ __global__ void non_diagonal_backward_gradient_kernel(Complex<T>* phi_state,
                                                       const int* target_masks,
                                                       int phase_count,
                                                       bool reverse_phases) {
+#if SAD_ROTATION_PERSISTENT
     cg::grid_group grid = cg::this_grid();
-    __shared__ Complex<T> mailbox[kTileAmplitudes];
+#endif
+    constexpr size_t kMailboxBytes =
+        backward_rotation_mailbox_bytes<T, Gate>();
+    __shared__ __align__(16)
+        unsigned char mailbox[kMailboxBytes == 0 ? 16 : kMailboxBytes];
     __shared__ double reduction[kBlockThreads];
     __shared__ uint64_t tile_base;
 
@@ -150,7 +159,9 @@ __global__ void non_diagonal_backward_gradient_kernel(Complex<T>* phi_state,
             }
             __syncthreads();
         }
+#if SAD_ROTATION_PERSISTENT
         grid.sync();
+#endif
     }
 }
 
@@ -169,11 +180,13 @@ void launch_non_diagonal_forward(Complex<T>* state,
     const auto kernel =
         non_diagonal_forward_kernel<T, Gate, SharedParameter>;
     constexpr size_t shared_bytes =
-        kForwardTileAmplitudes * sizeof(Complex<T>);
-    SAD_CUDA_CHECK(cudaFuncSetAttribute(
-        kernel,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        static_cast<int>(shared_bytes)));
+        forward_rotation_mailbox_bytes<T, Gate>();
+    if constexpr (shared_bytes > 0) {
+        SAD_CUDA_CHECK(cudaFuncSetAttribute(
+            kernel,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            static_cast<int>(shared_bytes)));
+    }
     int blocks_per_multiprocessor = 0;
     SAD_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
         &blocks_per_multiprocessor,
@@ -184,20 +197,39 @@ void launch_non_diagonal_forward(Complex<T>* state,
         static_cast<uint64_t>(blocks_per_multiprocessor) * multiprocessors;
     const int grid_size =
         static_cast<int>(std::min<uint64_t>(tile_count, resident_blocks));
-    void* arguments[] = {&state,
-                         const_cast<RotationCoefficients<T>**>(&coefficients),
-                         &qubits,
-                         &parameter_offset,
-                         const_cast<int**>(&selected_maps),
-                         const_cast<int**>(&target_masks),
-                         &phase_count,
-                         &reverse_phases};
-    SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
-        reinterpret_cast<const void*>(kernel),
-        dim3(grid_size),
-        dim3(kForwardBlockThreads),
-        arguments,
-        shared_bytes));
+    if constexpr (kRotationPersistent) {
+        void* arguments[] = {
+            &state,
+            const_cast<RotationCoefficients<T>**>(&coefficients),
+            &qubits,
+            &parameter_offset,
+            const_cast<int**>(&selected_maps),
+            const_cast<int**>(&target_masks),
+            &phase_count,
+            &reverse_phases};
+        SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
+            reinterpret_cast<const void*>(kernel),
+            dim3(grid_size),
+            dim3(kForwardBlockThreads),
+            arguments,
+            shared_bytes));
+    } else {
+        const int ordinary_grid_size = static_cast<int>(tile_count);
+        for (int step = 0; step < phase_count; ++step) {
+            const int phase = reverse_phases ? phase_count - 1 - step : step;
+            kernel<<<ordinary_grid_size,
+                     kForwardBlockThreads,
+                     shared_bytes>>>(state,
+                                     coefficients,
+                                     qubits,
+                                     parameter_offset,
+                                     selected_maps + phase * kForwardTileBits,
+                                     target_masks + phase,
+                                     1,
+                                     false);
+        }
+        SAD_CUDA_CHECK(cudaGetLastError());
+    }
 }
 
 template <typename T, NonDiagonalGate Gate, bool SharedParameter = false>
@@ -223,21 +255,41 @@ void launch_non_diagonal_backward(Complex<T>* phi,
         static_cast<uint64_t>(blocks_per_multiprocessor) * multiprocessors;
     const int grid_size =
         static_cast<int>(std::min<uint64_t>(tile_count, resident_blocks));
-    void* arguments[] = {&phi,
-                         &lambda,
-                         const_cast<RotationCoefficients<T>**>(&coefficients),
-                         &gradients,
-                         &qubits,
-                         &parameter_offset,
-                         const_cast<int**>(&selected_maps),
-                         const_cast<int**>(&target_masks),
-                         &phase_count,
-                         &reverse_phases};
-    SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
-        reinterpret_cast<const void*>(kernel),
-        dim3(grid_size),
-        dim3(kBlockThreads),
-        arguments));
+    if constexpr (kRotationPersistent) {
+        void* arguments[] = {
+            &phi,
+            &lambda,
+            const_cast<RotationCoefficients<T>**>(&coefficients),
+            &gradients,
+            &qubits,
+            &parameter_offset,
+            const_cast<int**>(&selected_maps),
+            const_cast<int**>(&target_masks),
+            &phase_count,
+            &reverse_phases};
+        SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
+            reinterpret_cast<const void*>(kernel),
+            dim3(grid_size),
+            dim3(kBlockThreads),
+            arguments));
+    } else {
+        const int ordinary_grid_size = static_cast<int>(tile_count);
+        for (int step = 0; step < phase_count; ++step) {
+            const int phase = reverse_phases ? step : phase_count - 1 - step;
+            kernel<<<ordinary_grid_size, kBlockThreads>>>(
+                phi,
+                lambda,
+                coefficients,
+                gradients,
+                qubits,
+                parameter_offset,
+                selected_maps + phase * kTileBits,
+                target_masks + phase,
+                1,
+                false);
+        }
+        SAD_CUDA_CHECK(cudaGetLastError());
+    }
 }
 
 

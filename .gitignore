@@ -5,5 +5,9 @@ __pycache__/
 .ruff_cache/
 .venv/
 benchmark/results/*.csv
+!benchmark/results/rotation_deep_dive.csv
+!benchmark/results/rotation_full_circuit.csv
+!benchmark/results/rotation_ncu.csv
+!benchmark/results/rotation_reduction.csv
 sad/build/
 .env
