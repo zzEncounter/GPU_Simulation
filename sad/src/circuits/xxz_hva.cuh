@@ -63,6 +63,21 @@ struct CircuitExecutor<SAD_CIRCUIT_XXZ_HVA, T> {
     static void apply_layer(int layer,
                             const ForwardCircuitContext<T>& context) {
         const auto layout = XxzLayerLayout::at(layer, context.qubits);
+        if constexpr (kXxzCrossMatching) {
+            launch_xxz_cross_matching_forward(
+                context.phi->current,
+                context.rotation_coefficients,
+                context.qubits,
+                layout.x,
+                layout.y,
+                layout.z,
+                context.xxz_even_selected_maps,
+                context.xxz_even_pair_counts,
+                context.xxz_odd_selected_maps,
+                context.xxz_odd_pair_counts,
+                context.xxz_even_phase_count);
+            return;
+        }
         launch_xxz_matching_forward(context.phi->current,
                                     context.rotation_coefficients,
                                     context.qubits,
@@ -112,6 +127,23 @@ struct CircuitExecutor<SAD_CIRCUIT_XXZ_HVA, T> {
     static void backward_layer(int layer,
                                const BackwardCircuitContext<T>& context) {
         const auto layout = XxzLayerLayout::at(layer, context.qubits);
+        if constexpr (kXxzCrossMatching) {
+            launch_xxz_cross_matching_backward(
+                context.phi->current,
+                context.lambda->current,
+                context.rotation_coefficients,
+                context.gradients,
+                context.qubits,
+                layout.x,
+                layout.y,
+                layout.z,
+                context.xxz_even_selected_maps,
+                context.xxz_even_pair_counts,
+                context.xxz_odd_selected_maps,
+                context.xxz_odd_pair_counts,
+                context.xxz_even_phase_count);
+            return;
+        }
         launch_xxz_matching_backward(context.phi->current,
                                      context.lambda->current,
                                      context.rotation_coefficients,

@@ -52,13 +52,8 @@ __global__ void initialise_plus_cost_state_kernel(
     for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
          index < state_size;
          index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
-        Complex<T> factor =
-            diagonal_lookup_factor<T, DiagonalGate::RZZ_EVEN>(
-                index, phase_lookup, qubits, qubits / 2);
-        factor = multiply(
-            factor,
-            diagonal_lookup_factor<T, DiagonalGate::RZZ_ODD>(
-                index, phase_lookup, qubits, qubits / 2));
+        const Complex<T> factor =
+            shared_ring_rzz_factor(index, phase_lookup, qubits);
         state[index] = scale(factor, plus_amplitude);
     }
 }
@@ -81,8 +76,13 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
                                         DiagonalLookupData<T>* data) {
         for (int layer = 0; layer < layers; ++layer) {
             const auto layout = QaoaLayerLayout::at(layer);
-            append_shared_diagonal_lookup_group(
-                parameters, layout.gamma, qubits / 2, data);
+            if constexpr (kQaoaCompactLookup) {
+                append_ring_rzz_compact_lookup_group(
+                    parameters, layout.gamma, qubits, data);
+            } else {
+                append_shared_diagonal_lookup_group(
+                    parameters, layout.gamma, qubits / 2, data);
+            }
         }
     }
 
@@ -167,7 +167,8 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
             FusedDiagonalMode::RZZ,
             false,
             true,
-            true>(context.phi,
+            true,
+            kQaoaCompactLookup>(context.phi,
                   context.rotation_coefficients,
                   context.qubits,
                   layout.beta,
@@ -222,6 +223,26 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
 
     static void backward_layer_optimized(
         int layer, const BackwardCircuitContext<T>& context) {
+        if constexpr (kQaoaCompactLookup && kQaoaFusedBackward) {
+            if (context.qubits < 24) {
+                backward_layer(layer, context);
+                return;
+            }
+            const auto layout = QaoaLayerLayout::at(layer);
+            launch_qaoa_mixer_cost_backward(
+                context.phi->current,
+                context.lambda->current,
+                context.rotation_coefficients,
+                context.diagonal_lookup_at(layout.gamma),
+                context.gradients,
+                context.qubits,
+                layout.beta,
+                layout.gamma,
+                context.selected_maps,
+                context.target_masks,
+                context.phase_count);
+            return;
+        }
         backward_layer(layer, context);
     }
 

@@ -42,6 +42,12 @@ _VARIANT_FLAGS = {
         "-DSAD_BLOCK_THREADS=128",
         "-DSAD_REGISTER_BITS=3",
     ),
+    "f128r3_b32r3": (
+        "-DSAD_FORWARD_BLOCK_THREADS=128",
+        "-DSAD_FORWARD_REGISTER_BITS=3",
+        "-DSAD_BLOCK_THREADS=32",
+        "-DSAD_REGISTER_BITS=3",
+    ),
 }
 _VARIANT_LIBRARIES = {
     name: _SAD_ROOT / "build" / f"libsad_{name}.so"
@@ -246,6 +252,8 @@ def _select_library(
             return "f64r4_b128r3", _VARIANT_LIBRARIES["f64r4_b128r3"]
         if qubits == 24:
             return "f64r3_b64r4", _VARIANT_LIBRARIES["f64r3_b64r4"]
+    elif circuit_id == 4 and qubits >= 20:
+        return "f128r3_b32r3", _VARIANT_LIBRARIES["f128r3_b32r3"]
     return "f128r2_b128r2", _DEFAULT_LIBRARY
 
 

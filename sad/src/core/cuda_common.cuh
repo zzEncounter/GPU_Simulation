@@ -36,6 +36,12 @@ namespace sad {
 #ifndef SAD_ORDINARY_BLOCK_THREADS
 #define SAD_ORDINARY_BLOCK_THREADS 128
 #endif
+#ifndef SAD_DIAGONAL_BLOCK_THREADS
+#define SAD_DIAGONAL_BLOCK_THREADS 64
+#endif
+#ifndef SAD_SHARED_DIAGONAL_BLOCK_THREADS
+#define SAD_SHARED_DIAGONAL_BLOCK_THREADS 128
+#endif
 #ifndef SAD_DIAGONAL_LOOKUP_BITS
 #define SAD_DIAGONAL_LOOKUP_BITS 8
 #endif
@@ -53,6 +59,33 @@ namespace sad {
 #endif
 #ifndef SAD_ROTATION_WARP_ATOMIC
 #define SAD_ROTATION_WARP_ATOMIC 0
+#endif
+#ifndef SAD_DIAGONAL_WARP_ATOMIC
+#define SAD_DIAGONAL_WARP_ATOMIC 0
+#endif
+#ifndef SAD_CNOT_FORWARD_SCATTER
+#define SAD_CNOT_FORWARD_SCATTER 1
+#endif
+#ifndef SAD_XXZ_PERSISTENT
+#define SAD_XXZ_PERSISTENT 0
+#endif
+#ifndef SAD_REAL_PERSISTENT
+#define SAD_REAL_PERSISTENT 0
+#endif
+#ifndef SAD_PHASED_RY_PERSISTENT
+#define SAD_PHASED_RY_PERSISTENT 0
+#endif
+#ifndef SAD_SU2_PHASED_BACKWARD
+#define SAD_SU2_PHASED_BACKWARD 0
+#endif
+#ifndef SAD_XXZ_CROSS_MATCHING
+#define SAD_XXZ_CROSS_MATCHING 1
+#endif
+#ifndef SAD_QAOA_COMPACT_LOOKUP
+#define SAD_QAOA_COMPACT_LOOKUP 1
+#endif
+#ifndef SAD_QAOA_FUSED_BACKWARD
+#define SAD_QAOA_FUSED_BACKWARD 1
 #endif
 
 constexpr int exact_log2(int value) {
@@ -77,6 +110,9 @@ constexpr int kForwardTileBits =
 constexpr int kForwardTileAmplitudes = 1 << kForwardTileBits;
 constexpr int kOrdinaryBlockThreads = SAD_ORDINARY_BLOCK_THREADS;
 constexpr int kOrdinaryWarpsPerBlock = kOrdinaryBlockThreads / 32;
+constexpr int kDiagonalBlockThreads = SAD_DIAGONAL_BLOCK_THREADS;
+constexpr int kDiagonalWarpsPerBlock = kDiagonalBlockThreads / 32;
+constexpr int kSharedDiagonalBlockThreads = SAD_SHARED_DIAGONAL_BLOCK_THREADS;
 constexpr bool kFixedLowLanes = SAD_FIXED_LOW_LANES != 0;
 constexpr bool kForwardFixedLowLanes =
     SAD_FORWARD_FIXED_LOW_LANES != 0;
@@ -99,6 +135,15 @@ constexpr bool kRyScalarMailbox = SAD_RY_SCALAR_MAILBOX != 0;
 constexpr bool kRotationPersistent = SAD_ROTATION_PERSISTENT != 0;
 constexpr bool kLegacyBlockReduction = SAD_LEGACY_BLOCK_REDUCTION != 0;
 constexpr bool kRotationWarpAtomic = SAD_ROTATION_WARP_ATOMIC != 0;
+constexpr bool kDiagonalWarpAtomic = SAD_DIAGONAL_WARP_ATOMIC != 0;
+constexpr bool kCnotForwardScatter = SAD_CNOT_FORWARD_SCATTER != 0;
+constexpr bool kXxzPersistent = SAD_XXZ_PERSISTENT != 0;
+constexpr bool kRealPersistent = SAD_REAL_PERSISTENT != 0;
+constexpr bool kPhasedRyPersistent = SAD_PHASED_RY_PERSISTENT != 0;
+constexpr bool kSu2PhasedBackward = SAD_SU2_PHASED_BACKWARD != 0;
+constexpr bool kXxzCrossMatching = SAD_XXZ_CROSS_MATCHING != 0;
+constexpr bool kQaoaCompactLookup = SAD_QAOA_COMPACT_LOOKUP != 0;
+constexpr bool kQaoaFusedBackward = SAD_QAOA_FUSED_BACKWARD != 0;
 
 static_assert(kBlockThreads == 32 || kBlockThreads == 64 ||
               kBlockThreads == 128 ||
@@ -116,6 +161,14 @@ static_assert(kOrdinaryBlockThreads == 64 ||
               kOrdinaryBlockThreads == 128 ||
               kOrdinaryBlockThreads == 256 ||
               kOrdinaryBlockThreads == 512);
+static_assert(kDiagonalBlockThreads == 64 ||
+              kDiagonalBlockThreads == 128 ||
+              kDiagonalBlockThreads == 256 ||
+              kDiagonalBlockThreads == 512);
+static_assert(kSharedDiagonalBlockThreads == 64 ||
+              kSharedDiagonalBlockThreads == 128 ||
+              kSharedDiagonalBlockThreads == 256 ||
+              kSharedDiagonalBlockThreads == 512);
 static_assert(kDiagonalLookupBits >= 1 && kDiagonalLookupBits <= 12);
 static_assert(kMailboxChunks == 1 || kMailboxChunks == 2 ||
               kMailboxChunks == 4 || kMailboxChunks == 8 ||

@@ -13,7 +13,8 @@ template <typename T,
           FusedDiagonalMode Mode,
           bool ScatterCnot,
           bool DiagonalBefore = false,
-          bool SharedParameter = false>
+          bool SharedParameter = false,
+          bool SharedDiagonal = false>
 __global__ void fused_non_diagonal_forward_kernel(
     Complex<T>* state,
     Complex<T>* output,
@@ -72,14 +73,20 @@ __global__ void fused_non_diagonal_forward_kernel(
                 if constexpr (DiagonalBefore &&
                               Mode != FusedDiagonalMode::NONE) {
                     if (active && first_phase) {
-                        values[reg] = multiply(
-                            values[reg],
-                            fused_diagonal_factor<T, Mode>(
+                        Complex<T> factor;
+                        if constexpr (SharedDiagonal) {
+                            static_assert(Mode == FusedDiagonalMode::RZZ);
+                            factor = shared_ring_rzz_factor(
+                                index, rzz_even_lookup, qubits);
+                        } else {
+                            factor = fused_diagonal_factor<T, Mode>(
                                 index,
                                 qubits,
                                 rz_lookup,
                                 rzz_even_lookup,
-                                rzz_odd_lookup));
+                                rzz_odd_lookup);
+                        }
+                        values[reg] = multiply(values[reg], factor);
                     }
                 }
             }
@@ -106,14 +113,20 @@ __global__ void fused_non_diagonal_forward_kernel(
                     if (final_phase) {
                         if constexpr (!DiagonalBefore &&
                                       Mode != FusedDiagonalMode::NONE) {
-                            value = multiply(
-                                value,
-                                fused_diagonal_factor<T, Mode>(
+                            Complex<T> factor;
+                            if constexpr (SharedDiagonal) {
+                                static_assert(Mode == FusedDiagonalMode::RZZ);
+                                factor = shared_ring_rzz_factor(
+                                    index, rzz_even_lookup, qubits);
+                            } else {
+                                factor = fused_diagonal_factor<T, Mode>(
                                     index,
                                     qubits,
                                     rz_lookup,
                                     rzz_even_lookup,
-                                    rzz_odd_lookup));
+                                    rzz_odd_lookup);
+                            }
+                            value = multiply(value, factor);
                         }
                         const uint64_t output_index =
                             ScatterCnot
@@ -140,7 +153,8 @@ template <typename T,
           FusedDiagonalMode Mode,
           bool ScatterCnot,
           bool DiagonalBefore = false,
-          bool SharedParameter = false>
+          bool SharedParameter = false,
+          bool SharedDiagonal = false>
 void launch_fused_non_diagonal_forward(
     StatePair<T>* phi,
     const RotationCoefficients<T>* coefficients,
@@ -162,7 +176,8 @@ void launch_fused_non_diagonal_forward(
                                           Mode,
                                           ScatterCnot,
                                           DiagonalBefore,
-                                          SharedParameter>;
+                                          SharedParameter,
+                                          SharedDiagonal>;
     constexpr size_t shared_bytes =
         forward_rotation_mailbox_bytes<T, Gate>();
     if constexpr (shared_bytes > 0) {

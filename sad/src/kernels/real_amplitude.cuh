@@ -268,8 +268,11 @@ __global__ void real_fused_forward_kernel(
     const int* selected_maps,
     const int* target_masks,
     int phase_count,
-    bool reverse_phases) {
+    bool reverse_phases,
+    bool final_call) {
+#if SAD_REAL_PERSISTENT
     cg::grid_group grid = cg::this_grid();
+#endif
     extern __shared__ __align__(16) unsigned char dynamic_shared[];
     auto* mailbox = reinterpret_cast<T*>(dynamic_shared);
     __shared__ uint64_t tile_base;
@@ -280,7 +283,7 @@ __global__ void real_fused_forward_kernel(
     const int warp = tid >> 5;
     for (int step = 0; step < phase_count; ++step) {
         const int phase = reverse_phases ? phase_count - 1 - step : step;
-        const bool final_phase = step + 1 == phase_count;
+        const bool final_phase = final_call && step + 1 == phase_count;
         const int* selected = selected_maps + phase * kForwardTileBits;
         for (uint64_t tile = blockIdx.x; tile < tile_count;
              tile += gridDim.x) {
@@ -326,7 +329,11 @@ __global__ void real_fused_forward_kernel(
             }
             __syncthreads();
         }
-        if (!final_phase) grid.sync();
+        if (!final_phase) {
+#if SAD_REAL_PERSISTENT
+            grid.sync();
+#endif
+        }
     }
 }
 
@@ -343,8 +350,11 @@ __global__ void real_fused_backward_kernel(
     const int* selected_maps,
     const int* target_masks,
     int phase_count,
-    bool reverse_phases) {
+    bool reverse_phases,
+    bool first_call) {
+#if SAD_REAL_PERSISTENT
     cg::grid_group grid = cg::this_grid();
+#endif
     __shared__ T mailbox[kTileAmplitudes];
     __shared__ double reduction[kBlockThreads];
     __shared__ uint64_t tile_base;
@@ -355,7 +365,7 @@ __global__ void real_fused_backward_kernel(
     const int warp = tid >> 5;
     for (int step = 0; step < phase_count; ++step) {
         const int phase = reverse_phases ? step : phase_count - 1 - step;
-        const bool first_phase = step == 0;
+        const bool first_phase = first_call && step == 0;
         const int* selected = selected_maps + phase * kTileBits;
         for (uint64_t tile = blockIdx.x; tile < tile_count;
              tile += gridDim.x) {
@@ -416,7 +426,11 @@ __global__ void real_fused_backward_kernel(
             }
             __syncthreads();
         }
-        if (step + 1 < phase_count) grid.sync();
+        if (step + 1 < phase_count) {
+#if SAD_REAL_PERSISTENT
+            grid.sync();
+#endif
+        }
     }
 }
 
@@ -495,21 +509,46 @@ void launch_real_fused_forward(
         static_cast<uint64_t>(blocks_per_multiprocessor) * multiprocessors));
     T* state = reinterpret_cast<T*>(phi->current);
     T* output = reinterpret_cast<T*>(phi->scratch);
-    void* arguments[] = {&state,
-                         &output,
-                         const_cast<RotationCoefficients<T>**>(&coefficients),
-                         &qubits,
-                         &parameter_offset,
-                         const_cast<int**>(&selected_maps),
-                         const_cast<int**>(&target_masks),
-                         &phase_count,
-                         &reverse_phases};
-    SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
-        reinterpret_cast<const void*>(kernel),
-        dim3(grid_size),
-        dim3(kForwardBlockThreads),
-        arguments,
-        shared_bytes));
+    if constexpr (kRealPersistent) {
+        bool final_call = true;
+        void* arguments[] = {
+            &state,
+            &output,
+            const_cast<RotationCoefficients<T>**>(&coefficients),
+            &qubits,
+            &parameter_offset,
+            const_cast<int**>(&selected_maps),
+            const_cast<int**>(&target_masks),
+            &phase_count,
+            &reverse_phases,
+            &final_call};
+        SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
+            reinterpret_cast<const void*>(kernel),
+            dim3(grid_size),
+            dim3(kForwardBlockThreads),
+            arguments,
+            shared_bytes));
+    } else {
+        const int ordinary_grid_size = static_cast<int>(tile_count);
+        for (int step = 0; step < phase_count; ++step) {
+            const int phase = reverse_phases ? phase_count - 1 - step : step;
+            const bool final_call = step + 1 == phase_count;
+            kernel<<<ordinary_grid_size,
+                     kForwardBlockThreads,
+                     shared_bytes>>>(state,
+                                     output,
+                                     coefficients,
+                                     qubits,
+                                     parameter_offset,
+                                     selected_maps +
+                                         phase * kForwardTileBits,
+                                     target_masks + phase,
+                                     1,
+                                     false,
+                                     final_call);
+        }
+        SAD_CUDA_CHECK(cudaGetLastError());
+    }
     phi->swap();
 }
 
@@ -539,24 +578,49 @@ void launch_real_fused_backward(
     const T* lambda_input = reinterpret_cast<T*>(lambda->current);
     T* phi_output = reinterpret_cast<T*>(phi->scratch);
     T* lambda_output = reinterpret_cast<T*>(lambda->scratch);
-    void* arguments[] = {
-        const_cast<T**>(&phi_input),
-        const_cast<T**>(&lambda_input),
-        &phi_output,
-        &lambda_output,
-        const_cast<RotationCoefficients<T>**>(&coefficients),
-        &gradients,
-        &qubits,
-        &parameter_offset,
-        const_cast<int**>(&selected_maps),
-        const_cast<int**>(&target_masks),
-        &phase_count,
-        &reverse_phases};
-    SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
-        reinterpret_cast<const void*>(kernel),
-        dim3(grid_size),
-        dim3(kBlockThreads),
-        arguments));
+    if constexpr (kRealPersistent) {
+        bool first_call = true;
+        void* arguments[] = {
+            const_cast<T**>(&phi_input),
+            const_cast<T**>(&lambda_input),
+            &phi_output,
+            &lambda_output,
+            const_cast<RotationCoefficients<T>**>(&coefficients),
+            &gradients,
+            &qubits,
+            &parameter_offset,
+            const_cast<int**>(&selected_maps),
+            const_cast<int**>(&target_masks),
+            &phase_count,
+            &reverse_phases,
+            &first_call};
+        SAD_CUDA_CHECK(cudaLaunchCooperativeKernel(
+            reinterpret_cast<const void*>(kernel),
+            dim3(grid_size),
+            dim3(kBlockThreads),
+            arguments));
+    } else {
+        const int ordinary_grid_size = static_cast<int>(tile_count);
+        for (int step = 0; step < phase_count; ++step) {
+            const int phase = reverse_phases ? step : phase_count - 1 - step;
+            const bool first_call = step == 0;
+            kernel<<<ordinary_grid_size, kBlockThreads>>>(
+                phi_input,
+                lambda_input,
+                phi_output,
+                lambda_output,
+                coefficients,
+                gradients,
+                qubits,
+                parameter_offset,
+                selected_maps + phase * kTileBits,
+                target_masks + phase,
+                1,
+                false,
+                first_call);
+        }
+        SAD_CUDA_CHECK(cudaGetLastError());
+    }
     phi->swap();
     lambda->swap();
 }

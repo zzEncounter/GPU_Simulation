@@ -292,5 +292,144 @@ void launch_non_diagonal_backward(Complex<T>* phi,
     }
 }
 
+template <typename T>
+__global__ void qaoa_mixer_cost_backward_kernel(
+    Complex<T>* phi_state,
+    Complex<T>* lambda_state,
+    const RotationCoefficients<T>* coefficients,
+    const Complex<T>* cost_lookup,
+    double* gradients,
+    int qubits,
+    int beta_offset,
+    int gamma_offset,
+    const int* selected,
+    const int* target_mask,
+    bool final_call) {
+    constexpr size_t kMailboxBytes =
+        backward_rotation_mailbox_bytes<T, NonDiagonalGate::RX>();
+    __shared__ __align__(16)
+        unsigned char mailbox[kMailboxBytes == 0 ? 16 : kMailboxBytes];
+    __shared__ double reduction[kBlockThreads];
+    __shared__ uint64_t tile_base;
+    const int tile_bits = min(qubits, kTileBits);
+    const uint64_t tile_count = 1ull << (qubits - tile_bits);
+    const int tid = threadIdx.x;
+    const int lane = tid & 31;
+    const int warp = tid >> 5;
+    for (uint64_t tile = blockIdx.x; tile < tile_count;
+         tile += gridDim.x) {
+        if (tid == 0) {
+            tile_base = scatter_tile_assignment<kTileBits>(
+                tile, qubits, selected, tile_bits);
+        }
+        __syncthreads();
+        Complex<T> phi[kRegisterAmplitudes];
+        Complex<T> lambda[kRegisterAmplitudes];
+#pragma unroll
+        for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+            const uint32_t local = static_cast<uint32_t>(
+                lane | (reg << kLaneBits) |
+                (warp << (kLaneBits + kRegisterBits)));
+            const bool active = local < (1u << tile_bits);
+            const uint64_t index =
+                tile_base | scatter_local_assignment<kTileBits>(
+                                local, selected, tile_bits);
+            phi[reg] = active ? phi_state[index] : make_complex<T>(0, 0);
+            lambda[reg] =
+                active ? lambda_state[index] : make_complex<T>(0, 0);
+        }
+        const bool thread_active =
+            (lane | (warp << (kLaneBits + kRegisterBits))) <
+            (1u << tile_bits);
+        apply_phase_backward<T, NonDiagonalGate::RX, true>(
+            phi,
+            lambda,
+            coefficients,
+            gradients,
+            beta_offset,
+            selected,
+            target_mask[0],
+            thread_active,
+            mailbox,
+            reduction);
+
+        double gamma_overlap = 0.0;
+        if (final_call) {
+#pragma unroll
+            for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+                const uint32_t local = static_cast<uint32_t>(
+                    lane | (reg << kLaneBits) |
+                    (warp << (kLaneBits + kRegisterBits)));
+                if (local < (1u << tile_bits)) {
+                    const uint64_t index =
+                        tile_base | scatter_local_assignment<kTileBits>(
+                                        local, selected, tile_bits);
+                    const int eigenvalue_sum =
+                        qubits - 2 * ring_domain_wall_count(index, qubits);
+                    gamma_overlap +=
+                        imag_conjugate_product(lambda[reg], phi[reg]) *
+                        static_cast<double>(eigenvalue_sum);
+                    const Complex<T> factor =
+                        shared_ring_rzz_factor(index, cost_lookup, qubits);
+                    const Complex<T> inverse_factor{
+                        factor.real, -factor.imag};
+                    phi[reg] = multiply(phi[reg], inverse_factor);
+                    lambda[reg] = multiply(lambda[reg], inverse_factor);
+                }
+            }
+            block_atomic_sum(
+                gamma_overlap, reduction, gradients + gamma_offset);
+        }
+#pragma unroll
+        for (int reg = 0; reg < kRegisterAmplitudes; ++reg) {
+            const uint32_t local = static_cast<uint32_t>(
+                lane | (reg << kLaneBits) |
+                (warp << (kLaneBits + kRegisterBits)));
+            if (local < (1u << tile_bits)) {
+                const uint64_t index =
+                    tile_base | scatter_local_assignment<kTileBits>(
+                                    local, selected, tile_bits);
+                phi_state[index] = phi[reg];
+                lambda_state[index] = lambda[reg];
+            }
+        }
+        __syncthreads();
+    }
+}
+
+template <typename T>
+void launch_qaoa_mixer_cost_backward(
+    Complex<T>* phi,
+    Complex<T>* lambda,
+    const RotationCoefficients<T>* coefficients,
+    const Complex<T>* cost_lookup,
+    double* gradients,
+    int qubits,
+    int beta_offset,
+    int gamma_offset,
+    const int* selected_maps,
+    const int* target_masks,
+    int phase_count) {
+    const int tile_bits = std::min(qubits, kTileBits);
+    const uint64_t tile_count = 1ull << (qubits - tile_bits);
+    for (int step = 0; step < phase_count; ++step) {
+        const int phase = phase_count - 1 - step;
+        qaoa_mixer_cost_backward_kernel<T>
+            <<<static_cast<int>(tile_count), kBlockThreads>>>(
+                phi,
+                lambda,
+                coefficients,
+                cost_lookup,
+                gradients,
+                qubits,
+                beta_offset,
+                gamma_offset,
+                selected_maps + phase * kTileBits,
+                target_masks + phase,
+                step + 1 == phase_count);
+    }
+    SAD_CUDA_CHECK(cudaGetLastError());
+}
+
 
 }  // namespace sad

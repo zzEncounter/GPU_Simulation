@@ -155,6 +155,26 @@ void append_shared_diagonal_lookup_group(const T* parameters,
     }
 }
 
+template <typename T>
+void append_ring_rzz_compact_lookup_group(const T* parameters,
+                                          size_t parameter_offset,
+                                          int qubits,
+                                          DiagonalLookupData<T>* data) {
+    data->offsets_by_parameter[parameter_offset] = data->factors.size();
+    // A closed binary ring has an even number of transitions, so only
+    // q/2+1 distinct generator eigenvalues are reachable.
+    for (int wall_pairs = 0; wall_pairs <= qubits / 2; ++wall_pairs) {
+        const int domain_walls = 2 * wall_pairs;
+        const int eigenvalue_sum = qubits - 2 * domain_walls;
+        const T phase = -static_cast<T>(0.5) *
+                        parameters[parameter_offset] *
+                        static_cast<T>(eigenvalue_sum);
+        data->factors.push_back(
+            {static_cast<T>(std::cos(phase)),
+             static_cast<T>(std::sin(phase))});
+    }
+}
+
 inline void build_phase_maps(int qubits,
                              int tile_bits,
                              bool fixed_low_lanes,
@@ -240,6 +260,87 @@ inline void build_bond_phase_maps(int qubits,
             }
         }
     }
+}
+
+// Preserve the original all-even -> all-odd dependency order while retaining
+// each contiguous block in one tile: internal odd bonds follow that block's
+// even bonds, and all cross-block odd bonds are emitted in a final phase.
+inline void build_xxz_cross_matching_maps(
+    int qubits,
+    int tile_bits,
+    std::vector<int>* selected_maps,
+    std::vector<int>* bond_offsets,
+    std::vector<int>* slot_pairs,
+    std::vector<int>* edges) {
+    const int active_tile_bits = std::min(qubits, tile_bits);
+    const int block_width = active_tile_bits & ~1;
+    std::vector<std::pair<int, int>> blocks;
+    selected_maps->clear();
+    bond_offsets->assign(1, 0);
+    slot_pairs->clear();
+    edges->clear();
+
+    const auto append_selected = [&](const std::vector<int>& phase_qubits) {
+        const int base = static_cast<int>(selected_maps->size());
+        selected_maps->resize(base + tile_bits, -1);
+        int filled = 0;
+        for (const int qubit : phase_qubits) {
+            (*selected_maps)[base + filled++] = qubit;
+        }
+        for (int qubit = 0;
+             filled < active_tile_bits && qubit < qubits;
+             ++qubit) {
+            if (std::find(phase_qubits.begin(), phase_qubits.end(), qubit) ==
+                phase_qubits.end()) {
+                (*selected_maps)[base + filled++] = qubit;
+            }
+        }
+    };
+
+    for (int first = 0; first < qubits; first += block_width) {
+        const int width = std::min(block_width, qubits - first);
+        blocks.emplace_back(first, width);
+        std::vector<int> phase_qubits;
+        for (int offset = 0; offset < width; ++offset) {
+            phase_qubits.push_back(first + offset);
+        }
+        append_selected(phase_qubits);
+        const auto append_bond = [&](int first_slot, int edge) {
+            slot_pairs->push_back(first_slot);
+            slot_pairs->push_back(first_slot + 1);
+            edges->push_back(edge);
+        };
+        for (int offset = 0; offset + 1 < width; offset += 2) {
+            append_bond(offset, first + offset);
+        }
+        for (int offset = 1; offset + 1 < width; offset += 2) {
+            append_bond(offset, first + offset);
+        }
+        bond_offsets->push_back(static_cast<int>(edges->size()));
+    }
+
+    std::vector<int> boundary_qubits;
+    std::vector<std::pair<int, int>> boundary_bonds;
+    for (size_t block = 0; block < blocks.size(); ++block) {
+        const int left = blocks[block].first + blocks[block].second - 1;
+        const int right = blocks[(block + 1) % blocks.size()].first;
+        boundary_bonds.emplace_back(left, right);
+        boundary_qubits.push_back(left);
+        boundary_qubits.push_back(right);
+    }
+    append_selected(boundary_qubits);
+    for (const auto [left, right] : boundary_bonds) {
+        const int left_slot = static_cast<int>(
+            std::find(boundary_qubits.begin(), boundary_qubits.end(), left) -
+            boundary_qubits.begin());
+        const int right_slot = static_cast<int>(
+            std::find(boundary_qubits.begin(), boundary_qubits.end(), right) -
+            boundary_qubits.begin());
+        slot_pairs->push_back(left_slot);
+        slot_pairs->push_back(right_slot);
+        edges->push_back(left);
+    }
+    bond_offsets->push_back(static_cast<int>(edges->size()));
 }
 
 

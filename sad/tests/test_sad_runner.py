@@ -107,6 +107,8 @@ def test_split_times_sum_to_total():
         (2, 24, "f64r3_b64r4"),
         (2, 26, "f64r4_b128r3"),
         (3, 28, "f64r4_b128r3"),
+        (4, 20, "f128r3_b32r3"),
+        (4, 28, "f128r3_b32r3"),
     ],
 )
 def test_size_dependent_kernel_variant(

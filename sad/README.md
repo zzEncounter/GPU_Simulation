@@ -57,13 +57,13 @@ python benchmark/compare_sad_pennylane.py
 
 - RX/RY：安全变体为 `r=2`、4 warps/CTA。每个 thread 保存 4 个 amplitude；5 个 tile bit 通过 lane shuffle，2 个通过 thread registers，2 个通过 warp/shared-memory mailbox。大规模会按 circuit/qubits 分别 dispatch 64/128-thread、8/16-amplitude 的 forward/backward 变体。RY 的符号用 sign-bit XOR 实现，无 warp 分支；backward 的 `phi/lambda` 顺序复用同一 mailbox。phase target 用 bit mask 表示，支持紧凑和 fixed-low-lane 布局。默认每个 phase 使用一个普通 kernel，由同一 stream 的 kernel 边界提供全局顺序；`SAD_ROTATION_PERSISTENT=1` 可重建旧 cooperative persistent 路径用于消融。
 - 所有参数的半角 sine/cosine 在资源创建时一次性预计算，timed kernel 不调用 device `sincos`。当前 float32/float64 的 RX/RY ordinary/persistent kernel 均为 zero-stack。
-- RZ/RZZ：资源创建时按每 8 个 generator 生成 256-entry phase lookup；kernel 每个 amplitude 只组合 lookup factor。backward 在相同 state pass 中累计各 generator overlap并反向演化 `phi/lambda`，partial 使用 gate-major shared memory，避免 thread-local `overlaps[]`。当前 diagonal forward/backward 也为 zero-stack。
+- RZ/RZZ：资源创建时按每 8 个 generator 生成 256-entry phase lookup；kernel 每个 amplitude 只组合 lookup factor。backward 在相同 state pass 中累计各 generator overlap并反向演化 `phi/lambda`，partial 使用 gate-major shared memory，避免 thread-local `overlaps[]`。独立多梯度 diagonal 使用 64-thread CTA，共享单梯度 QAOA 使用 128-thread CTA。当前 diagonal forward/backward 也为 zero-stack。
 - 首层：资源创建时生成 8-qubit chunk product lookup。RA/SU2 直接生成 `rotation(+RZ)+CNOT` 后的完整状态；RZZ 直接生成 `RX+RZ+RZZ` 后的完整状态，不再执行 memset、零态 kernel 和首层的多个 full-state pass。
 - fused layer：最终 RX/RY phase 在写回前应用 RZ/RZZ lookup，并按需直接 scatter ring CNOT。反向 kernel 从 CNOT 后的索引 gather，同时完成 diagonal gradient/inverse 和 RX/RY gradient/inverse。
-- ring CNOT：将顺序 CNOT 层合成为一个可逆 basis permutation，coalesced 写入另一 state vector，随后交换 input/output；backward 同时轮换 `phi/lambda`。
+- ring CNOT：将顺序 CNOT 层合成为一个可逆 basis permutation，forward 使用 scatter，adjoint 使用 gather；写入另一 state vector 后交换 input/output，backward 同时轮换 `phi/lambda`。
 - Hamiltonian：直接计算 `H|psi>`，其中 ZZ 部分为对角能量，X 部分读取对应 bit-flip amplitude。
-- QAOA：每层只有共享的 `beta/gamma` 两个参数，cost-first；共享 RZZ backward 一次规约整层 gamma gradient。
-- XXZ-HVA：bond-aware tile 将同一 bond 的 RXX/RYY/RZZ 合成一次 partner update，目标 Hamiltonian 为周期 `XX+YY+0.5ZZ`。
+- QAOA：每层只有共享的 `beta/gamma` 两个参数，cost-first；cost phase 使用按 domain-wall count 索引的 `q/2+1` 小表，共享 RZZ backward 一次规约整层 gamma gradient，并在 q>=24 融合进 mixer 的最终 adjoint phase。
+- XXZ-HVA：bond-aware tile 将同一 bond 的 RXX/RYY/RZZ 合成一次 partner update；dependency-preserving schedule 还把 block 内 odd bond 接在相邻 even bond 后，boundary odd bond 最后处理。目标 Hamiltonian 为周期 `XX+YY+0.5ZZ`。
 - backward：从 `phi=|psi>`、`lambda=H|psi>` 出发逆序扫描，使用 `dE/dtheta = Im(<lambda|G|phi>)`，并同时反演两条 state vector。RZ/ZZ 可在一个层端点上一次规约多个梯度。
 
 ## CUDA 源码布局

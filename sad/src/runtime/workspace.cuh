@@ -35,9 +35,12 @@ inline auto prepare_device(int device_id) -> DeviceRunInfo {
     SAD_CUDA_CHECK(cudaSetDevice(device_id));
     DeviceRunInfo info;
     SAD_CUDA_CHECK(cudaGetDeviceProperties(&info.properties, device_id));
-    if (!info.properties.cooperativeLaunch) {
-        throw std::runtime_error(
-            "selected CUDA device does not support cooperative launch");
+    if constexpr (kRotationPersistent || kXxzPersistent || kRealPersistent ||
+                  kPhasedRyPersistent) {
+        if (!info.properties.cooperativeLaunch) {
+            throw std::runtime_error(
+                "selected CUDA device does not support cooperative launch");
+        }
     }
     SAD_CUDA_CHECK(cudaMemGetInfo(&info.free_before, &info.total_memory));
     return info;
@@ -168,39 +171,67 @@ void prepare_workspace(PreparedWorkspace<T>* workspace,
                      &backward_selected_maps,
                      &backward_target_masks);
     if (config.circuit == SAD_CIRCUIT_XXZ_HVA) {
-        build_bond_phase_maps(config.qubits,
-                              kForwardTileBits,
-                              0,
-                              &forward_xxz_even_selected_maps,
-                              &forward_xxz_even_pair_counts);
-        build_bond_phase_maps(config.qubits,
-                              kForwardTileBits,
-                              1,
-                              &forward_xxz_odd_selected_maps,
-                              &forward_xxz_odd_pair_counts);
-        build_bond_phase_maps(config.qubits,
-                              kTileBits,
-                              0,
-                              &backward_xxz_even_selected_maps,
-                              &backward_xxz_even_pair_counts);
-        build_bond_phase_maps(config.qubits,
-                              kTileBits,
-                              1,
-                              &backward_xxz_odd_selected_maps,
-                              &backward_xxz_odd_pair_counts);
+        if constexpr (kXxzCrossMatching) {
+            build_xxz_cross_matching_maps(
+                config.qubits,
+                kForwardTileBits,
+                &forward_xxz_even_selected_maps,
+                &forward_xxz_even_pair_counts,
+                &forward_xxz_odd_selected_maps,
+                &forward_xxz_odd_pair_counts);
+            build_xxz_cross_matching_maps(
+                config.qubits,
+                kTileBits,
+                &backward_xxz_even_selected_maps,
+                &backward_xxz_even_pair_counts,
+                &backward_xxz_odd_selected_maps,
+                &backward_xxz_odd_pair_counts);
+        } else {
+            build_bond_phase_maps(config.qubits,
+                                  kForwardTileBits,
+                                  0,
+                                  &forward_xxz_even_selected_maps,
+                                  &forward_xxz_even_pair_counts);
+            build_bond_phase_maps(config.qubits,
+                                  kForwardTileBits,
+                                  1,
+                                  &forward_xxz_odd_selected_maps,
+                                  &forward_xxz_odd_pair_counts);
+            build_bond_phase_maps(config.qubits,
+                                  kTileBits,
+                                  0,
+                                  &backward_xxz_even_selected_maps,
+                                  &backward_xxz_even_pair_counts);
+            build_bond_phase_maps(config.qubits,
+                                  kTileBits,
+                                  1,
+                                  &backward_xxz_odd_selected_maps,
+                                  &backward_xxz_odd_pair_counts);
+        }
     }
     workspace->forward_phase_count =
         static_cast<int>(forward_target_masks.size());
     workspace->backward_phase_count =
         static_cast<int>(backward_target_masks.size());
-    workspace->forward_xxz_even_phase_count =
-        static_cast<int>(forward_xxz_even_pair_counts.size());
-    workspace->forward_xxz_odd_phase_count =
-        static_cast<int>(forward_xxz_odd_pair_counts.size());
-    workspace->backward_xxz_even_phase_count =
-        static_cast<int>(backward_xxz_even_pair_counts.size());
-    workspace->backward_xxz_odd_phase_count =
-        static_cast<int>(backward_xxz_odd_pair_counts.size());
+    if constexpr (kXxzCrossMatching) {
+        workspace->forward_xxz_even_phase_count =
+            std::max(0,
+                     static_cast<int>(forward_xxz_even_pair_counts.size()) - 1);
+        workspace->forward_xxz_odd_phase_count = 0;
+        workspace->backward_xxz_even_phase_count =
+            std::max(0,
+                     static_cast<int>(backward_xxz_even_pair_counts.size()) - 1);
+        workspace->backward_xxz_odd_phase_count = 0;
+    } else {
+        workspace->forward_xxz_even_phase_count =
+            static_cast<int>(forward_xxz_even_pair_counts.size());
+        workspace->forward_xxz_odd_phase_count =
+            static_cast<int>(forward_xxz_odd_pair_counts.size());
+        workspace->backward_xxz_even_phase_count =
+            static_cast<int>(backward_xxz_even_pair_counts.size());
+        workspace->backward_xxz_odd_phase_count =
+            static_cast<int>(backward_xxz_odd_pair_counts.size());
+    }
     workspace->forward_selected_maps.allocate(forward_selected_maps.size());
     workspace->forward_target_masks.allocate(forward_target_masks.size());
     workspace->backward_selected_maps.allocate(backward_selected_maps.size());

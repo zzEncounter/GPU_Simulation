@@ -9,5 +9,11 @@ benchmark/results/*.csv
 !benchmark/results/rotation_full_circuit.csv
 !benchmark/results/rotation_ncu.csv
 !benchmark/results/rotation_reduction.csv
+!benchmark/results/persistent_gates.csv
+!benchmark/results/diagonal_backward.csv
+!benchmark/results/su2_phased_backward.csv
+!benchmark/results/qaoa_compact_lookup.csv
+!benchmark/results/cnot_end_to_end.csv
+!benchmark/results/xxz_full_circuit.csv
 sad/build/
 .env

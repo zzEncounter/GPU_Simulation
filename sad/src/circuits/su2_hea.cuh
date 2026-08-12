@@ -156,6 +156,20 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
 
     static void backward_layer_optimized(
         int layer, const BackwardCircuitContext<T>& context) {
+        if constexpr (kSu2PhasedBackward) {
+            const auto layout = Su2LayerLayout::at(layer, context.qubits);
+            launch_phased_ry_cnot_backward(context.phi,
+                                           context.lambda,
+                                           context.rotation_coefficients,
+                                           context.gradients,
+                                           context.qubits,
+                                           layout.ry,
+                                           layout.rz,
+                                           context.selected_maps,
+                                           context.target_masks,
+                                           context.phase_count);
+            return;
+        }
         if (context.qubits == 20 || context.qubits >= 28) {
             backward_layer(layer, context);
             return;

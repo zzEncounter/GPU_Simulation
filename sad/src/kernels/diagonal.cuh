@@ -6,6 +6,14 @@
 
 namespace sad {
 
+__device__ __forceinline__ int ring_domain_wall_count(uint64_t index,
+                                                       int qubits) {
+    const uint64_t mask = (1ull << qubits) - 1ull;
+    const uint64_t rotated = ((index << 1) & mask) |
+                             (index >> (qubits - 1));
+    return __popcll(index ^ rotated);
+}
+
 template <DiagonalGate Gate>
 __device__ inline int diagonal_eigenvalue(uint64_t basis,
                                           int gate_index,
@@ -48,6 +56,24 @@ __device__ __forceinline__ Complex<T> diagonal_lookup_factor(
     return factor;
 }
 
+template <typename T>
+__device__ __forceinline__ Complex<T> shared_ring_rzz_factor(
+    uint64_t index,
+    const Complex<T>* phase_lookup,
+    int qubits) {
+    if constexpr (kQaoaCompactLookup) {
+        return phase_lookup[ring_domain_wall_count(index, qubits) / 2];
+    } else {
+        Complex<T> factor =
+            diagonal_lookup_factor<T, DiagonalGate::RZZ_EVEN>(
+                index, phase_lookup, qubits, qubits / 2);
+        return multiply(
+            factor,
+            diagonal_lookup_factor<T, DiagonalGate::RZZ_ODD>(
+                index, phase_lookup, qubits, qubits / 2));
+    }
+}
+
 template <typename T, DiagonalGate Gate>
 __global__ void diagonal_forward_kernel(Complex<T>* state,
                                         const Complex<T>* phase_lookup,
@@ -72,12 +98,12 @@ __global__ void diagonal_backward_kernel(Complex<T>* phi_state,
                                          int qubits,
                                          int parameter_offset,
                                          int gate_count) {
-    __shared__ double overlaps[kMaxQubits * kOrdinaryBlockThreads];
+    __shared__ double overlaps[kMaxQubits * kDiagonalBlockThreads];
     __shared__ double warp_partials[
-        kMaxQubits * kOrdinaryWarpsPerBlock];
+        kMaxQubits * kDiagonalWarpsPerBlock];
     const int tid = threadIdx.x;
     for (int gate = 0; gate < gate_count; ++gate) {
-        overlaps[gate * kOrdinaryBlockThreads + tid] = 0.0;
+        overlaps[gate * kDiagonalBlockThreads + tid] = 0.0;
     }
     __syncthreads();
 
@@ -98,7 +124,7 @@ __global__ void diagonal_backward_kernel(Complex<T>* phi_state,
                 if (gate < gate_count) {
                     const int eigenvalue =
                         diagonal_eigenvalue<Gate>(index, gate, qubits);
-                    overlaps[gate * kOrdinaryBlockThreads + tid] +=
+                    overlaps[gate * kDiagonalBlockThreads + tid] +=
                         base_overlap * static_cast<double>(eigenvalue);
                     if (eigenvalue < 0) {
                         code |= 1u << bit;
@@ -117,17 +143,25 @@ __global__ void diagonal_backward_kernel(Complex<T>* phi_state,
     const int warp = tid >> 5;
     for (int gate = 0; gate < gate_count; ++gate) {
         const double sum =
-            warp_sum(overlaps[gate * kOrdinaryBlockThreads + tid]);
-        if (lane == 0) {
-            warp_partials[gate * kOrdinaryWarpsPerBlock + warp] = sum;
+            warp_sum(overlaps[gate * kDiagonalBlockThreads + tid]);
+        if constexpr (kDiagonalWarpAtomic) {
+            if (lane == 0) {
+                atomicAdd(gradient_accumulator + parameter_offset + gate,
+                          sum);
+            }
+        } else if (lane == 0) {
+            warp_partials[gate * kDiagonalWarpsPerBlock + warp] = sum;
         }
+    }
+    if constexpr (kDiagonalWarpAtomic) {
+        return;
     }
     __syncthreads();
     if (warp == 0) {
         for (int gate = 0; gate < gate_count; ++gate) {
-            double value = lane < kOrdinaryWarpsPerBlock
+            double value = lane < kDiagonalWarpsPerBlock
                                ? warp_partials[
-                                     gate * kOrdinaryWarpsPerBlock + lane]
+                                     gate * kDiagonalWarpsPerBlock + lane]
                                : 0.0;
             value = warp_sum(value);
             if (lane == 0) {
@@ -144,7 +178,7 @@ void launch_diagonal_forward(Complex<T>* state,
                              int qubits,
                              int gate_count,
                              int grid_size) {
-    diagonal_forward_kernel<T, Gate><<<grid_size, kOrdinaryBlockThreads>>>(
+    diagonal_forward_kernel<T, Gate><<<grid_size, kDiagonalBlockThreads>>>(
         state, phase_lookup, state_size, qubits, gate_count);
     SAD_CUDA_CHECK(cudaGetLastError());
 }
@@ -159,7 +193,7 @@ void launch_diagonal_backward(Complex<T>* phi,
                               int parameter_offset,
                               int gate_count,
                               int grid_size) {
-    diagonal_backward_kernel<T, Gate><<<grid_size, kOrdinaryBlockThreads>>>(phi,
+    diagonal_backward_kernel<T, Gate><<<grid_size, kDiagonalBlockThreads>>>(phi,
                                                                     lambda,
                                                                     phase_lookup,
                                                                    gradients,
@@ -240,9 +274,25 @@ __global__ void rz_rzz_backward_kernel(
     for (int generator = 0; generator < generator_count; ++generator) {
         const double sum = warp_sum(
             overlaps[generator * kCombinedDiagonalThreads + tid]);
-        if (lane == 0) {
+        if constexpr (kDiagonalWarpAtomic) {
+            if (lane == 0) {
+                int parameter = 0;
+                if (generator < qubits) {
+                    parameter = rz_parameter_offset + generator;
+                } else {
+                    const int left = generator - qubits;
+                    parameter = (left & 1) == 0
+                                    ? rzz_even_parameter_offset + left / 2
+                                    : rzz_odd_parameter_offset + left / 2;
+                }
+                atomicAdd(gradients + parameter, sum);
+            }
+        } else if (lane == 0) {
             warp_partials[generator * kCombinedDiagonalWarps + warp] = sum;
         }
+    }
+    if constexpr (kDiagonalWarpAtomic) {
+        return;
     }
     __syncthreads();
     if (warp == 0) {
@@ -311,13 +361,8 @@ __global__ void shared_ring_rzz_forward_kernel(
     for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
          index < state_size;
          index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
-        Complex<T> factor =
-            diagonal_lookup_factor<T, DiagonalGate::RZZ_EVEN>(
-                index, phase_lookup, qubits, qubits / 2);
-        factor = multiply(
-            factor,
-            diagonal_lookup_factor<T, DiagonalGate::RZZ_ODD>(
-                index, phase_lookup, qubits, qubits / 2));
+        const Complex<T> factor =
+            shared_ring_rzz_factor(index, phase_lookup, qubits);
         state[index] = multiply(state[index], factor);
     }
 }
@@ -329,7 +374,7 @@ void launch_shared_ring_rzz_forward(Complex<T>* state,
                                     int qubits,
                                     int grid_size) {
     shared_ring_rzz_forward_kernel<T>
-        <<<grid_size, kOrdinaryBlockThreads>>>(
+        <<<grid_size, kSharedDiagonalBlockThreads>>>(
             state, phase_lookup, state_size, qubits);
     SAD_CUDA_CHECK(cudaGetLastError());
 }
@@ -343,30 +388,19 @@ __global__ void shared_ring_rzz_backward_kernel(
     uint64_t state_size,
     int qubits,
     int parameter_offset) {
-    __shared__ double reduction[kOrdinaryBlockThreads];
+    __shared__ double reduction[kSharedDiagonalBlockThreads];
     double local_gradient = 0.0;
     for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
          index < state_size;
          index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
         const Complex<T> phi = phi_state[index];
         const Complex<T> lambda = lambda_state[index];
-        int eigenvalue_sum = 0;
-        for (int left = 0; left < qubits; ++left) {
-            const int right = (left + 1) % qubits;
-            eigenvalue_sum += ((index >> left) & 1ull) ==
-                                      ((index >> right) & 1ull)
-                                  ? 1
-                                  : -1;
-        }
+        const int eigenvalue_sum =
+            qubits - 2 * ring_domain_wall_count(index, qubits);
         local_gradient += imag_conjugate_product(lambda, phi) *
                           static_cast<double>(eigenvalue_sum);
-        Complex<T> factor =
-            diagonal_lookup_factor<T, DiagonalGate::RZZ_EVEN>(
-                index, phase_lookup, qubits, qubits / 2);
-        factor = multiply(
-            factor,
-            diagonal_lookup_factor<T, DiagonalGate::RZZ_ODD>(
-                index, phase_lookup, qubits, qubits / 2));
+        const Complex<T> factor =
+            shared_ring_rzz_factor(index, phase_lookup, qubits);
         const Complex<T> inverse_factor{factor.real, -factor.imag};
         phi_state[index] = multiply(phi, inverse_factor);
         lambda_state[index] = multiply(lambda, inverse_factor);
@@ -386,7 +420,7 @@ void launch_shared_ring_rzz_backward(Complex<T>* phi,
                                      int parameter_offset,
                                      int grid_size) {
     shared_ring_rzz_backward_kernel<T>
-        <<<grid_size, kOrdinaryBlockThreads>>>(phi,
+        <<<grid_size, kSharedDiagonalBlockThreads>>>(phi,
                                                lambda,
                                                phase_lookup,
                                                gradients,
