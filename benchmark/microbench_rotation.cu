@@ -1,3 +1,4 @@
+#include "kernels/diagonal.cuh"
 #include "kernels/rotation.cuh"
 #include "runtime/lookups.cuh"
 
@@ -5,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -14,6 +16,125 @@ using namespace sad;
 #ifndef SAD_MICRO_ITERATIONS
 #define SAD_MICRO_ITERATIONS 50
 #endif
+
+namespace {
+
+struct TargetClasses {
+    int lane = 0;
+    int reg = 0;
+    int warp = 0;
+};
+
+bool parse_counts(const std::string& value, std::vector<int>* counts) {
+    std::stringstream stream(value);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        try {
+            counts->push_back(std::stoi(token));
+        } catch (...) {
+            return false;
+        }
+    }
+    return !counts->empty();
+}
+
+bool parse_class_plan(const std::string& value,
+                      std::vector<TargetClasses>* phases) {
+    std::stringstream stream(value);
+    std::string phase;
+    while (std::getline(stream, phase, '-')) {
+        TargetClasses classes;
+        char extra = 0;
+        if (std::sscanf(phase.c_str(), "L%dR%dW%d%c",
+                        &classes.lane,
+                        &classes.reg,
+                        &classes.warp,
+                        &extra) != 3 ||
+            classes.lane < 0 || classes.reg < 0 || classes.warp < 0) {
+            return false;
+        }
+        phases->push_back(classes);
+    }
+    return !phases->empty();
+}
+
+std::string join_ints(const std::vector<int>& values, char separator) {
+    std::ostringstream stream;
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index != 0) stream << separator;
+        stream << values[index];
+    }
+    return stream.str();
+}
+
+std::string csv_safe(std::string value) {
+    std::replace(value.begin(), value.end(), ',', ';');
+    return value;
+}
+
+bool build_class_plan_maps(int qubits,
+                           int tile_bits,
+                           int register_bits,
+                           const std::string& family,
+                           const std::vector<TargetClasses>& phases,
+                           std::vector<int>* selected,
+                           std::vector<int>* target_masks) {
+    const int warp_bits = tile_bits - kLaneBits - register_bits;
+    const bool fixed = family == "fixed" || family == "pairs";
+    const bool pairs = family == "pairs";
+    if (family != "compact" && !fixed) return false;
+    if (pairs && warp_bits < 1) return false;
+
+    int target_total = 0;
+    for (const auto& phase : phases) {
+        target_total += phase.lane + phase.reg + phase.warp;
+    }
+    if (target_total != qubits) return false;
+    if (fixed && phases.front().lane + phases.front().reg +
+                     phases.front().warp < kLaneBits + (pairs ? 1 : 0)) {
+        // Later phases reserve these physical low bits.  They must already
+        // have been consumed as rotation targets by the first phase.
+        return false;
+    }
+
+    selected->assign(phases.size() * tile_bits, -1);
+    target_masks->assign(phases.size(), 0);
+    int target = 0;
+    for (size_t phase_index = 0; phase_index < phases.size(); ++phase_index) {
+        const auto& phase = phases[phase_index];
+        const bool reserve_low = fixed && phase_index > 0;
+        const bool reserve_pair = pairs && phase_index > 0;
+        if (phase.lane > kLaneBits || phase.reg > register_bits ||
+            phase.warp > warp_bits || (reserve_low && phase.lane != 0) ||
+            (reserve_pair && phase.warp > warp_bits - 1)) {
+            return false;
+        }
+        const int base = static_cast<int>(phase_index) * tile_bits;
+        if (reserve_low) {
+            for (int lane = 0; lane < kLaneBits; ++lane) {
+                (*selected)[base + lane] = lane;
+            }
+        }
+        const int first_warp_slot = kLaneBits + register_bits;
+        if (reserve_pair) {
+            (*selected)[base + first_warp_slot] = kLaneBits;
+        }
+
+        auto add_targets = [&](int first_slot, int count) {
+            for (int offset = 0; offset < count; ++offset) {
+                const int slot = first_slot + offset;
+                (*selected)[base + slot] = target++;
+                (*target_masks)[phase_index] |= 1 << slot;
+            }
+        };
+        add_targets(0, phase.lane);
+        add_targets(kLaneBits, phase.reg);
+        add_targets(first_warp_slot + (reserve_pair ? 1 : 0), phase.warp);
+    }
+    return true;
+}
+
+}  // namespace
 
 bool build_pair_contiguous_phase_maps(int qubits,
                                       int tile_bits,
@@ -60,11 +181,14 @@ bool build_pair_contiguous_phase_maps(int qubits,
 }
 
 int main(int argc, char** argv) {
-    if (argc != 5 && argc != 6) {
+    if (argc < 5 || argc > 7) {
         std::fprintf(stderr,
                      "usage: %s QUBITS rx|ry low|high|range:FIRST|fixed|"
-                     "fixed:FIRST|sequence:N,N,...|full|full-fixed|full-pairs "
-                     "forward|backward [all|none|lane|register|warp|COUNT]\n",
+                     "fixed:FIRST|sequence:N,N,...|compact-sequence:N,N,...|"
+                     "fixed-sequence:N,N,...|full|full-fixed|full-pairs|"
+                     "plan:compact|fixed|pairs:L5R2W1-L0R2W0... "
+                     "forward|backward [all|none|lane|register|warp|COUNT] "
+                     "[adaptive]\n",
                      argv[0]);
         return 2;
     }
@@ -73,6 +197,8 @@ int main(int argc, char** argv) {
     const std::string layout = argv[3];
     const std::string direction = argv[4];
     const std::string target_spec = argc == 6 ? argv[5] : "all";
+    const bool adaptive_mailbox = argc == 7 && std::string(argv[6]) == "adaptive";
+    if (argc == 7 && !adaptive_mailbox) return 2;
     const int tile_bits =
         direction == "forward" ? kForwardTileBits : kTileBits;
     const int register_bits = direction == "forward" ? kForwardRegisterBits
@@ -95,29 +221,47 @@ int main(int argc, char** argv) {
                 qubits, tile_bits, register_bits, &selected, &target_masks)) {
             return 2;
         }
-    } else if (layout.rfind("sequence:", 0) == 0) {
-        std::vector<int> counts;
-        std::stringstream stream(layout.substr(9));
-        std::string token;
-        int total = 0;
-        while (std::getline(stream, token, ',')) {
-            try {
-                counts.push_back(std::stoi(token));
-            } catch (...) {
-                return 2;
-            }
-            total += counts.back();
+    } else if (layout.rfind("plan:", 0) == 0) {
+        const size_t family_end = layout.find(':', 5);
+        if (family_end == std::string::npos) return 2;
+        const std::string family = layout.substr(5, family_end - 5);
+        std::vector<TargetClasses> phases;
+        if (!parse_class_plan(layout.substr(family_end + 1), &phases) ||
+            !build_class_plan_maps(qubits,
+                                   tile_bits,
+                                   register_bits,
+                                   family,
+                                   phases,
+                                   &selected,
+                                   &target_masks)) {
+            return 2;
         }
+    } else if (layout.rfind("sequence:", 0) == 0 ||
+               layout.rfind("fixed-sequence:", 0) == 0 ||
+               layout.rfind("compact-sequence:", 0) == 0) {
+        const bool compact_sequence =
+            layout.rfind("compact-sequence:", 0) == 0;
+        const size_t prefix = compact_sequence
+                                  ? std::string("compact-sequence:").size()
+                              : layout.rfind("fixed-sequence:", 0) == 0
+                                  ? std::string("fixed-sequence:").size()
+                                  : std::string("sequence:").size();
+        std::vector<int> counts;
+        if (!parse_counts(layout.substr(prefix), &counts)) return 2;
+        const int total = std::accumulate(counts.begin(), counts.end(), 0);
         if (counts.empty() || total != qubits) return 2;
         selected.assign(counts.size() * tile_bits, -1);
         target_masks.assign(counts.size(), 0);
         int target = 0;
         for (size_t phase = 0; phase < counts.size(); ++phase) {
-            const int first_slot = phase == 0 ? 0 : kLaneBits;
-            const int capacity = phase == 0 ? tile_bits
-                                             : tile_bits - kLaneBits;
+            const int first_slot = phase == 0 || compact_sequence
+                                       ? 0
+                                       : kLaneBits;
+            const int capacity = phase == 0 || compact_sequence
+                                     ? tile_bits
+                                     : tile_bits - kLaneBits;
             if (counts[phase] <= 0 || counts[phase] > capacity) return 2;
-            if (phase > 0) {
+            if (!compact_sequence && phase > 0) {
                 for (int slot = 0; slot < kLaneBits; ++slot) {
                     selected[phase * tile_bits + slot] = slot;
                 }
@@ -201,6 +345,33 @@ int main(int argc, char** argv) {
         } else if (target_spec == "warp") {
             first_slot = kLaneBits + register_bits;
             count = tile_bits - first_slot;
+        } else if (target_spec.rfind("L", 0) == 0) {
+            TargetClasses classes;
+            char extra = 0;
+            if (std::sscanf(target_spec.c_str(), "L%dR%dW%d%c",
+                            &classes.lane,
+                            &classes.reg,
+                            &classes.warp,
+                            &extra) != 3 ||
+                classes.lane < 0 || classes.lane > kLaneBits ||
+                classes.reg < 0 || classes.reg > register_bits ||
+                classes.warp < 0 ||
+                classes.warp > tile_bits - kLaneBits - register_bits ||
+                (fixed_layout && classes.lane != 0)) {
+                return 2;
+            }
+            target_masks[0] = 0;
+            for (int slot = 0; slot < classes.lane; ++slot) {
+                target_masks[0] |= 1 << slot;
+            }
+            for (int offset = 0; offset < classes.reg; ++offset) {
+                target_masks[0] |= 1 << (kLaneBits + offset);
+            }
+            for (int offset = 0; offset < classes.warp; ++offset) {
+                target_masks[0] |=
+                    1 << (kLaneBits + register_bits + offset);
+            }
+            count = -1;
         } else {
             try {
                 count = std::stoi(target_spec);
@@ -209,12 +380,21 @@ int main(int argc, char** argv) {
             }
             first_slot = fixed_layout ? kLaneBits : 0;
         }
-        if (count < 0 || first_slot < 0 || first_slot + count > tile_bits) {
+        if (count < -1 || first_slot < 0 || first_slot + count > tile_bits) {
             return 2;
         }
-        target_masks[0] = 0;
-        for (int slot = first_slot; slot < first_slot + count; ++slot) {
-            target_masks[0] |= 1 << slot;
+        if (count >= 0) {
+            target_masks[0] = 0;
+            for (int slot = first_slot; slot < first_slot + count; ++slot) {
+                target_masks[0] |= 1 << slot;
+            }
+        }
+    }
+
+    uint64_t warp_phase_mask = 0;
+    for (size_t phase = 0; phase < target_masks.size(); ++phase) {
+        if ((target_masks[phase] >> (kLaneBits + register_bits)) != 0) {
+            warp_phase_mask |= 1ull << phase;
         }
     }
 
@@ -254,6 +434,7 @@ int main(int argc, char** argv) {
     SAD_CUDA_CHECK(cudaGetDeviceProperties(&properties, 0));
     cudaFuncAttributes attributes{};
     int active_blocks = 0;
+    int no_mailbox_active_blocks = 0;
     size_t dynamic_shared_bytes = 0;
     size_t mailbox_bytes = 0;
     if (direction == "forward") {
@@ -275,6 +456,11 @@ int main(int argc, char** argv) {
                 non_diagonal_forward_kernel<double, NonDiagonalGate::RX>,
                 kForwardBlockThreads,
                 dynamic_shared_bytes));
+            SAD_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &no_mailbox_active_blocks,
+                non_diagonal_forward_kernel<double, NonDiagonalGate::RX>,
+                kForwardBlockThreads,
+                0));
         } else {
             dynamic_shared_bytes =
                 forward_rotation_mailbox_bytes<double, NonDiagonalGate::RY>();
@@ -293,6 +479,11 @@ int main(int argc, char** argv) {
                 non_diagonal_forward_kernel<double, NonDiagonalGate::RY>,
                 kForwardBlockThreads,
                 dynamic_shared_bytes));
+            SAD_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &no_mailbox_active_blocks,
+                non_diagonal_forward_kernel<double, NonDiagonalGate::RY>,
+                kForwardBlockThreads,
+                0));
         }
     }
 #ifndef SAD_MICRO_FORWARD_ONLY
@@ -309,6 +500,12 @@ int main(int argc, char** argv) {
                                                   NonDiagonalGate::RX>,
             kBlockThreads,
             0));
+        SAD_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &no_mailbox_active_blocks,
+            non_diagonal_backward_gradient_kernel<
+                double, NonDiagonalGate::RX, false, false>,
+            kBlockThreads,
+            0));
     } else {
         mailbox_bytes =
             backward_rotation_mailbox_bytes<double, NonDiagonalGate::RY>();
@@ -320,6 +517,12 @@ int main(int argc, char** argv) {
             &active_blocks,
             non_diagonal_backward_gradient_kernel<double,
                                                   NonDiagonalGate::RY>,
+            kBlockThreads,
+            0));
+        SAD_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &no_mailbox_active_blocks,
+            non_diagonal_backward_gradient_kernel<
+                double, NonDiagonalGate::RY, false, false>,
             kBlockThreads,
             0));
     }
@@ -335,7 +538,9 @@ int main(int argc, char** argv) {
                     device_selected,
                     device_mask,
                     static_cast<int>(target_masks.size()),
-                    properties.multiProcessorCount);
+                    properties.multiProcessorCount,
+                    false,
+                    adaptive_mailbox ? warp_phase_mask : ~0ull);
             } else {
                 launch_non_diagonal_forward<double, NonDiagonalGate::RY>(
                     phi,
@@ -345,7 +550,9 @@ int main(int argc, char** argv) {
                     device_selected,
                     device_mask,
                     static_cast<int>(target_masks.size()),
-                    properties.multiProcessorCount);
+                    properties.multiProcessorCount,
+                    false,
+                    adaptive_mailbox ? warp_phase_mask : ~0ull);
             }
         }
 #ifndef SAD_MICRO_FORWARD_ONLY
@@ -361,7 +568,9 @@ int main(int argc, char** argv) {
                     device_selected,
                     device_mask,
                     static_cast<int>(target_masks.size()),
-                    properties.multiProcessorCount);
+                    properties.multiProcessorCount,
+                    false,
+                    adaptive_mailbox ? warp_phase_mask : ~0ull);
             } else {
                 launch_non_diagonal_backward<double, NonDiagonalGate::RY>(
                     phi,
@@ -373,7 +582,9 @@ int main(int argc, char** argv) {
                     device_selected,
                     device_mask,
                     static_cast<int>(target_masks.size()),
-                    properties.multiProcessorCount);
+                    properties.multiProcessorCount,
+                    false,
+                    adaptive_mailbox ? warp_phase_mask : ~0ull);
             }
         }
 #endif
@@ -395,16 +606,37 @@ int main(int argc, char** argv) {
     float elapsed_ms = 0;
     SAD_CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
     int gate_count = 0;
+    std::vector<int> phase_targets;
+    std::vector<int> phase_lane_targets;
+    std::vector<int> phase_register_targets;
+    std::vector<int> phase_warp_targets;
     for (const int mask : target_masks) {
-        gate_count += __builtin_popcount(static_cast<unsigned>(mask));
+        const int lane = __builtin_popcount(
+            static_cast<unsigned>(mask & ((1 << kLaneBits) - 1)));
+        const int reg = __builtin_popcount(static_cast<unsigned>(
+            mask & (((1 << register_bits) - 1) << kLaneBits)));
+        const int warp = __builtin_popcount(static_cast<unsigned>(
+            mask >> (kLaneBits + register_bits)));
+        phase_lane_targets.push_back(lane);
+        phase_register_targets.push_back(reg);
+        phase_warp_targets.push_back(warp);
+        phase_targets.push_back(lane + reg + warp);
+        gate_count += lane + reg + warp;
     }
     const double average_ms = elapsed_ms / iterations;
     const double per_gate_ms = gate_count == 0 ? 0.0 : average_ms / gate_count;
-    const std::string measured_layout =
-        target_spec == "all" ? layout : layout + ":" + target_spec;
+    const std::string measured_layout = csv_safe(
+        target_spec == "all" ? layout : layout + ":" + target_spec);
+    if (adaptive_mailbox) {
+        std::printf(
+            "adaptive_mailbox=1,no_mailbox_active_cta_per_sm=%d,"
+            "warp_phase_mask=%llu\n",
+            no_mailbox_active_blocks,
+            static_cast<unsigned long long>(warp_phase_mask));
+    }
     std::printf(
         "%s,%s,%s,%d,%d,%d,%d,%zu,%d,%d,%zu,%zu,%d,%.9f,%.9f,"
-        "%zu,%d,%d,%d,%d\n",
+        "%zu,%d,%d,%d,%d,%zu,%d,%s,%s,%s,%s\n",
                 gate.c_str(),
                 measured_layout.c_str(),
                 direction.c_str(),
@@ -426,7 +658,13 @@ int main(int argc, char** argv) {
                 kMailboxChunks,
                 kRyScalarMailbox ? 1 : 0,
                 kRotationPersistent ? 1 : 0,
-                kLegacyBlockReduction ? 1 : 0);
+                kLegacyBlockReduction ? 1 : 0,
+                attributes.localSizeBytes,
+                properties.multiProcessorCount,
+                join_ints(phase_targets, ':').c_str(),
+                join_ints(phase_lane_targets, ':').c_str(),
+                join_ints(phase_register_targets, ':').c_str(),
+                join_ints(phase_warp_targets, ':').c_str());
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);

@@ -23,10 +23,10 @@
 
 原始数据：
 
-- [`benchmark/results/rotation_deep_dive.csv`](benchmark/results/rotation_deep_dive.csv)：630 个 isolated runs；
-- [`benchmark/results/rotation_full_circuit.csv`](benchmark/results/rotation_full_circuit.csv)：SU2/RZZ 端到端数据与完整 gradient；
-- [`benchmark/results/rotation_ncu.csv`](benchmark/results/rotation_ncu.csv)：Nsight counters；
-- [`benchmark/results/rotation_reduction.csv`](benchmark/results/rotation_reduction.csv)：三种 gradient reduction 的独立复测。
+- [`benchmark/results/rotation_deep_dive.csv`](../../benchmark/results/rotation_deep_dive.csv)：630 个 isolated runs；
+- [`benchmark/results/rotation_full_circuit.csv`](../../benchmark/results/rotation_full_circuit.csv)：SU2/RZZ 端到端数据与完整 gradient；
+- [`benchmark/results/rotation_ncu.csv`](../../benchmark/results/rotation_ncu.csv)：Nsight counters；
+- [`benchmark/results/rotation_reduction.csv`](../../benchmark/results/rotation_reduction.csv)：三种 gradient reduction 的独立复测。
 
 ## 3. mailbox 当前到底是什么
 

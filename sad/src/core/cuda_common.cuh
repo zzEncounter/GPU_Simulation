@@ -81,6 +81,10 @@ namespace sad {
 #ifndef SAD_XXZ_CROSS_MATCHING
 #define SAD_XXZ_CROSS_MATCHING 1
 #endif
+#ifndef SAD_XXZ_COMPONENT_MODE
+// Research switch: 0 = fused RXX+RYY+RZZ, 1 = RXX, 2 = RYY.
+#define SAD_XXZ_COMPONENT_MODE 0
+#endif
 #ifndef SAD_QAOA_COMPACT_LOOKUP
 #define SAD_QAOA_COMPACT_LOOKUP 1
 #endif
@@ -142,8 +146,10 @@ constexpr bool kRealPersistent = SAD_REAL_PERSISTENT != 0;
 constexpr bool kPhasedRyPersistent = SAD_PHASED_RY_PERSISTENT != 0;
 constexpr bool kSu2PhasedBackward = SAD_SU2_PHASED_BACKWARD != 0;
 constexpr bool kXxzCrossMatching = SAD_XXZ_CROSS_MATCHING != 0;
+constexpr int kXxzComponentMode = SAD_XXZ_COMPONENT_MODE;
 constexpr bool kQaoaCompactLookup = SAD_QAOA_COMPACT_LOOKUP != 0;
 constexpr bool kQaoaFusedBackward = SAD_QAOA_FUSED_BACKWARD != 0;
+constexpr int kQaoaFusedBackwardMode = SAD_QAOA_FUSED_BACKWARD;
 
 static_assert(kBlockThreads == 32 || kBlockThreads == 64 ||
               kBlockThreads == 128 ||
@@ -157,6 +163,7 @@ static_assert(kForwardBlockThreads == 32 || kForwardBlockThreads == 64 ||
 static_assert(kForwardWarpsPerBlock == (1 << kForwardWarpBits));
 static_assert(kForwardRegisterBits >= 2 && kForwardRegisterBits <= 6);
 static_assert(kForwardTileBits <= 12);
+static_assert(kXxzComponentMode >= 0 && kXxzComponentMode <= 2);
 static_assert(kOrdinaryBlockThreads == 64 ||
               kOrdinaryBlockThreads == 128 ||
               kOrdinaryBlockThreads == 256 ||

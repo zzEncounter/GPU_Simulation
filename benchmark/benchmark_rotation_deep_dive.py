@@ -43,6 +43,12 @@ MICRO_FIELDS = (
     "scalar_mailbox",
     "persistent",
     "legacy_reduction",
+    "local_bytes_per_thread",
+    "multiprocessors",
+    "phase_targets",
+    "phase_lane_targets",
+    "phase_register_targets",
+    "phase_warp_targets",
 )
 
 

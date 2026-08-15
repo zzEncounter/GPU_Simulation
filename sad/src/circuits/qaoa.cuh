@@ -151,10 +151,7 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
         apply_mixer(layout, context, layer);
         return;
 #elif SAD_QAOA_FUSE_COST_RX < 0
-        const bool use_fused_cost = context.qubits == 20 ||
-                                    context.qubits == 22 ||
-                                    context.qubits == 26 ||
-                                    context.qubits >= 28;
+        const bool use_fused_cost = context.qubits >= 22;
         if (!use_fused_cost) {
             apply_cost(layout, context);
             apply_mixer(layout, context, layer);
@@ -224,7 +221,7 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
     static void backward_layer_optimized(
         int layer, const BackwardCircuitContext<T>& context) {
         if constexpr (kQaoaCompactLookup && kQaoaFusedBackward) {
-            if (context.qubits < 24) {
+            if (kQaoaFusedBackwardMode == 1 && context.qubits < 20) {
                 backward_layer(layer, context);
                 return;
             }
@@ -248,6 +245,22 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
 
     static void backward_layer_fused(
         int layer, const BackwardCircuitContext<T>& context) {
+        if constexpr (kQaoaCompactLookup) {
+            const auto layout = QaoaLayerLayout::at(layer);
+            launch_qaoa_mixer_cost_backward(
+                context.phi->current,
+                context.lambda->current,
+                context.rotation_coefficients,
+                context.diagonal_lookup_at(layout.gamma),
+                context.gradients,
+                context.qubits,
+                layout.beta,
+                layout.gamma,
+                context.selected_maps,
+                context.target_masks,
+                context.phase_count);
+            return;
+        }
         backward_layer(layer, context);
     }
 };

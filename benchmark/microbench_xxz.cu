@@ -4,15 +4,51 @@
 #include <cuda_runtime.h>
 
 #include <cstdio>
+#include <sstream>
 #include <string>
 #include <vector>
 
 using namespace sad;
 
+bool build_bond_sequence_maps(int qubits,
+                              int tile_bits,
+                              int parity,
+                              const std::vector<int>& counts,
+                              std::vector<int>* selected,
+                              std::vector<int>* pair_counts) {
+    const int bond_count = qubits / 2;
+    int total = 0;
+    for (const int count : counts) total += count;
+    if (counts.empty() || total != bond_count) return false;
+    selected->assign(counts.size() * tile_bits, -1);
+    *pair_counts = counts;
+    int bond = 0;
+    for (size_t phase = 0; phase < counts.size(); ++phase) {
+        if (counts[phase] <= 0 || 2 * counts[phase] > tile_bits) return false;
+        const int base = static_cast<int>(phase) * tile_bits;
+        int filled = 0;
+        for (int offset = 0; offset < counts[phase]; ++offset, ++bond) {
+            const int left = parity + 2 * bond;
+            const int right = (left + 1) % qubits;
+            (*selected)[base + filled++] = left;
+            (*selected)[base + filled++] = right;
+        }
+        for (int qubit = 0; filled < std::min(qubits, tile_bits); ++qubit) {
+            bool used = false;
+            for (int slot = 0; slot < filled; ++slot) {
+                used |= (*selected)[base + slot] == qubit;
+            }
+            if (!used) (*selected)[base + filled++] = qubit;
+        }
+    }
+    return true;
+}
+
 int main(int argc, char** argv) {
-    if (argc != 5) {
+    if (argc != 5 && argc != 6) {
         std::fprintf(stderr,
-                     "usage: %s QUBITS forward|backward PARITY ITERATIONS\n",
+                     "usage: %s QUBITS forward|backward PARITY ITERATIONS "
+                     "[PAIR_COUNTS,SEPARATED]\n",
                      argv[0]);
         return 2;
     }
@@ -32,7 +68,25 @@ int main(int argc, char** argv) {
 
     std::vector<int> selected;
     std::vector<int> pair_counts;
-    build_bond_phase_maps(qubits, tile_bits, parity, &selected, &pair_counts);
+    if (argc == 6) {
+        std::vector<int> counts;
+        std::stringstream stream(argv[5]);
+        std::string token;
+        while (std::getline(stream, token, ',')) {
+            try {
+                counts.push_back(std::stoi(token));
+            } catch (...) {
+                return 2;
+            }
+        }
+        if (!build_bond_sequence_maps(
+                qubits, tile_bits, parity, counts, &selected, &pair_counts)) {
+            return 2;
+        }
+    } else {
+        build_bond_phase_maps(
+            qubits, tile_bits, parity, &selected, &pair_counts);
+    }
     int* device_selected = nullptr;
     int* device_pair_counts = nullptr;
     SAD_CUDA_CHECK(cudaMalloc(&device_selected, selected.size() * sizeof(int)));
@@ -135,7 +189,16 @@ int main(int argc, char** argv) {
     float elapsed_ms = 0.0f;
     SAD_CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
 
-    std::printf("%s,%d,%d,%d,%d,%d,%zu,%zu,%zu,%d,%d,%.9f\n",
+    std::ostringstream phase_counts;
+    for (size_t phase = 0; phase < pair_counts.size(); ++phase) {
+        if (phase != 0) phase_counts << ':';
+        phase_counts << pair_counts[phase];
+    }
+    constexpr const char* component =
+        kXxzComponentMode == 1 ? "xx" :
+        (kXxzComponentMode == 2 ? "yy" : "xx+yy+zz");
+    std::printf("%s,%s,%d,%d,%d,%d,%d,%zu,%zu,%zu,%d,%d,%.9f,%zu,%d,%d,%s\n",
+                component,
                 direction.c_str(),
                 qubits,
                 parity,
@@ -148,7 +211,11 @@ int main(int argc, char** argv) {
                 dynamic_shared_bytes,
                 attributes.numRegs,
                 active_blocks,
-                elapsed_ms / iterations);
+                elapsed_ms / iterations,
+                attributes.localSizeBytes,
+                properties.multiProcessorCount,
+                iterations,
+                phase_counts.str().c_str());
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);

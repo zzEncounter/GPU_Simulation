@@ -120,6 +120,14 @@ def test_size_dependent_kernel_variant(
     assert name == expected
 
 
+def test_fixed_parameter_policy_disables_variant_dispatch(monkeypatch):
+    monkeypatch.delenv("SAD_LIBRARY_PATH", raising=False)
+    monkeypatch.setenv("SAD_DISABLE_VARIANT_DISPATCH", "1")
+    for circuit_id in range(5):
+        name, _ = sad_runner._select_library(circuit_id, 28, "optimized")
+        assert name == "f128r2_b128r2"
+
+
 def test_trainable_phased_ry_rz_keeps_fused_cnot(monkeypatch):
     kwargs = {
         "circuit": "su2-hea",

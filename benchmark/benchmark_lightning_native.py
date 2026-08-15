@@ -181,7 +181,7 @@ def main() -> None:
         OVERWRITE_OUTPUT or not OUTPUT_CSV.exists() or OUTPUT_CSV.stat().st_size == 0
     )
     with OUTPUT_CSV.open(mode, newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
+        writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS, lineterminator="\n")
         if needs_header:
             writer.writeheader()
             stream.flush()

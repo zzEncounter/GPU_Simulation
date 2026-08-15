@@ -10,6 +10,15 @@
 #include "../kernels/rotation.cuh"
 #include "../runtime/lookups.cuh"
 
+#ifndef SAD_SU2_FORWARD_STRATEGY
+// -1 auto, 0 split RY/RZ/CNOT, 1 fuse lookup RZ and CNOT, 2 phased RY/RZ+CNOT.
+#define SAD_SU2_FORWARD_STRATEGY -1
+#endif
+#ifndef SAD_SU2_BACKWARD_STRATEGY
+// -1 auto, 0 split, 1 fuse lookup RZ and CNOT, 2 phased RZ/RY+CNOT.
+#define SAD_SU2_BACKWARD_STRATEGY -1
+#endif
+
 namespace sad {
 
 struct Su2LayerLayout {
@@ -60,10 +69,13 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
 
     static void forward_layer_optimized(
         int layer, const ForwardCircuitContext<T>& context) {
-        if (context.qubits >= 28) {
-            forward_layer_phased(layer, context);
-            return;
-        }
+#if SAD_SU2_FORWARD_STRATEGY == 0
+        forward_layer(layer, context);
+        return;
+#elif SAD_SU2_FORWARD_STRATEGY == 2
+        forward_layer_phased(layer, context);
+        return;
+#endif
         const auto layout = Su2LayerLayout::at(layer, context.qubits);
         launch_fused_non_diagonal_forward<
             T, NonDiagonalGate::RY, FusedDiagonalMode::RZ, true>(
@@ -156,6 +168,24 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
 
     static void backward_layer_optimized(
         int layer, const BackwardCircuitContext<T>& context) {
+#if SAD_SU2_BACKWARD_STRATEGY == 0
+        backward_layer(layer, context);
+        return;
+#elif SAD_SU2_BACKWARD_STRATEGY == 2
+        const auto phased_layout = Su2LayerLayout::at(layer, context.qubits);
+        launch_phased_ry_cnot_backward(context.phi,
+                                       context.lambda,
+                                       context.rotation_coefficients,
+                                       context.gradients,
+                                       context.qubits,
+                                       phased_layout.ry,
+                                       phased_layout.rz,
+                                       context.selected_maps,
+                                       context.target_masks,
+                                       context.phase_count);
+        return;
+#endif
+#if SAD_SU2_BACKWARD_STRATEGY < 0
         if constexpr (kSu2PhasedBackward) {
             const auto layout = Su2LayerLayout::at(layer, context.qubits);
             launch_phased_ry_cnot_backward(context.phi,
@@ -170,10 +200,13 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
                                            context.phase_count);
             return;
         }
-        if (context.qubits == 20 || context.qubits >= 28) {
+        // The lookup-fused backward path loses to the split path once the
+        // state is large enough for global traffic and live range to dominate.
+        if (context.qubits >= 20) {
             backward_layer(layer, context);
             return;
         }
+#endif
         const auto layout = Su2LayerLayout::at(layer, context.qubits);
         launch_fused_non_diagonal_backward<
             T, NonDiagonalGate::RY, FusedDiagonalMode::RZ, true>(
@@ -198,7 +231,26 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
 
     static void backward_layer_fused(
         int layer, const BackwardCircuitContext<T>& context) {
-        backward_layer_optimized(layer, context);
+        const auto layout = Su2LayerLayout::at(layer, context.qubits);
+        launch_fused_non_diagonal_backward<
+            T, NonDiagonalGate::RY, FusedDiagonalMode::RZ, true>(
+            context.phi,
+            context.lambda,
+            context.rotation_coefficients,
+            context.gradients,
+            context.qubits,
+            layout.ry,
+            layout.rz,
+            0,
+            0,
+            context.diagonal_lookup_at(layout.rz),
+            static_cast<const Complex<T>*>(nullptr),
+            static_cast<const Complex<T>*>(nullptr),
+            context.selected_maps,
+            context.target_masks,
+            context.phase_count,
+            context.multiprocessors,
+            kAlternatePhases && (layer & 1));
     }
 };
 

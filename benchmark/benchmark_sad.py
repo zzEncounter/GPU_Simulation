@@ -27,7 +27,6 @@ LAYERS = 8
 RANDOM_SEED = 42
 BATCHES = 1
 PRECISION = "float64"
-WARMUP_STEPS = 1
 DEVICE_NAME = "sad.cuda"
 EXECUTION_MODE = "optimized"
 OUTPUT_CSV = Path(__file__).resolve().parent / "results" / "sad_optimized_gpu.csv"
@@ -39,6 +38,11 @@ STEP_SCHEDULE = (
     (20, 5),
     (24, 3),
     (28, 2),
+)
+
+WARMUP_SCHEDULE = (
+    (20, 5),
+    (28, 1),
 )
 
 
@@ -96,7 +100,16 @@ def steps_for_qubits(qubits: int) -> int:
     return STEP_SCHEDULE[-1][1]
 
 
-def _empty_row(circuit: str, qubits: int, steps: int) -> dict[str, object]:
+def warmups_for_qubits(qubits: int) -> int:
+    for maximum_qubits, warmups in WARMUP_SCHEDULE:
+        if qubits <= maximum_qubits:
+            return warmups
+    return WARMUP_SCHEDULE[-1][1]
+
+
+def _empty_row(
+    circuit: str, qubits: int, steps: int, warmup_steps: int
+) -> dict[str, object]:
     return {field: "" for field in CSV_FIELDS} | {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": "error",
@@ -109,7 +122,7 @@ def _empty_row(circuit: str, qubits: int, steps: int) -> dict[str, object]:
         "precision": PRECISION,
         "random_seed": RANDOM_SEED,
         "batches": BATCHES,
-        "warmup_steps": WARMUP_STEPS,
+        "warmup_steps": warmup_steps,
         "steps": steps,
     }
 
@@ -168,7 +181,7 @@ def main() -> None:
         OVERWRITE_OUTPUT or not OUTPUT_CSV.exists() or OUTPUT_CSV.stat().st_size == 0
     )
     with OUTPUT_CSV.open(mode, newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
+        writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS, lineterminator="\n")
         if needs_header:
             writer.writeheader()
             stream.flush()
@@ -179,9 +192,13 @@ def main() -> None:
             for qubits in QUBITS:
                 run_index += 1
                 steps = steps_for_qubits(qubits)
+                warmup_steps = warmups_for_qubits(qubits)
                 label = f"[{run_index:02d}/{total:02d}] {circuit} {qubits}q x {LAYERS}l"
-                print(f"{label}: {steps} measured steps", flush=True)
-                row = _empty_row(circuit, qubits, steps)
+                print(
+                    f"{label}: {warmup_steps} warmups + {steps} measured steps",
+                    flush=True,
+                )
+                row = _empty_row(circuit, qubits, steps, warmup_steps)
                 try:
                     result = energy_and_grad(
                         circuit=circuit,
@@ -190,7 +207,7 @@ def main() -> None:
                         batches=BATCHES,
                         precision=PRECISION,
                         steps=steps,
-                        warmup_steps=WARMUP_STEPS,
+                        warmup_steps=warmup_steps,
                         device_name=DEVICE_NAME,
                     )
                     row = _success_row(result, steps)

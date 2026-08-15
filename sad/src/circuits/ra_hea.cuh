@@ -8,6 +8,13 @@
 #include "../kernels/rotation.cuh"
 #include "../runtime/lookups.cuh"
 
+#ifndef SAD_RA_FORWARD_FUSED
+#define SAD_RA_FORWARD_FUSED -1
+#endif
+#ifndef SAD_RA_BACKWARD_FUSED
+#define SAD_RA_BACKWARD_FUSED -1
+#endif
+
 namespace sad {
 
 struct RaLayerLayout {
@@ -50,6 +57,19 @@ struct CircuitExecutor<SAD_CIRCUIT_RA_HEA, T> {
 
     static void forward_layer_optimized(
         int layer, const ForwardCircuitContext<T>& context) {
+#if SAD_RA_FORWARD_FUSED == 0
+        forward_layer(layer, context);
+        return;
+#endif
+#if SAD_RA_FORWARD_FUSED < 0
+        // Complex-amplitude measurements are tied through 22q, while fusion
+        // wins decisively from 24q onward.  The real RA fast path does not pass
+        // through this branch.
+        if (context.qubits < 24) {
+            forward_layer(layer, context);
+            return;
+        }
+#endif
         const auto layout = RaLayerLayout::at(layer, context.qubits);
         launch_fused_non_diagonal_forward<
             T, NonDiagonalGate::RY, FusedDiagonalMode::NONE, true>(
@@ -111,6 +131,16 @@ struct CircuitExecutor<SAD_CIRCUIT_RA_HEA, T> {
 
     static void backward_layer_optimized(
         int layer, const BackwardCircuitContext<T>& context) {
+#if SAD_RA_BACKWARD_FUSED == 0
+        backward_layer(layer, context);
+        return;
+#endif
+#if SAD_RA_BACKWARD_FUSED < 0
+        if (context.qubits < 22) {
+            backward_layer(layer, context);
+            return;
+        }
+#endif
         const auto layout = RaLayerLayout::at(layer, context.qubits);
         launch_fused_non_diagonal_backward<
             T, NonDiagonalGate::RY, FusedDiagonalMode::NONE, true>(
@@ -135,7 +165,26 @@ struct CircuitExecutor<SAD_CIRCUIT_RA_HEA, T> {
 
     static void backward_layer_fused(
         int layer, const BackwardCircuitContext<T>& context) {
-        backward_layer_optimized(layer, context);
+        const auto layout = RaLayerLayout::at(layer, context.qubits);
+        launch_fused_non_diagonal_backward<
+            T, NonDiagonalGate::RY, FusedDiagonalMode::NONE, true>(
+            context.phi,
+            context.lambda,
+            context.rotation_coefficients,
+            context.gradients,
+            context.qubits,
+            layout.ry,
+            0,
+            0,
+            0,
+            static_cast<const Complex<T>*>(nullptr),
+            static_cast<const Complex<T>*>(nullptr),
+            static_cast<const Complex<T>*>(nullptr),
+            context.selected_maps,
+            context.target_masks,
+            context.phase_count,
+            context.multiprocessors,
+            kAlternatePhases && (layer & 1));
     }
 };
 

@@ -14,6 +14,15 @@ __device__ __forceinline__ Complex<T> apply_xxz_bond(
     RotationCoefficients<T> x,
     RotationCoefficients<T> y,
     RotationCoefficients<T> z) {
+    if constexpr (kXxzComponentMode == 1) {
+        return {x.cosine * self.real + x.sine * partner.imag,
+                x.cosine * self.imag - x.sine * partner.real};
+    }
+    if constexpr (kXxzComponentMode == 2) {
+        const T signed_sine = y.sine * static_cast<T>(z_eigenvalue);
+        return {y.cosine * self.real - signed_sine * partner.imag,
+                y.cosine * self.imag + signed_sine * partner.real};
+    }
     // RXX and RYY couple 00<->11 and 01<->10.  YY contributes -Z_i Z_j
     // times the XX-coupled partner, so the three commuting rotations can be
     // collapsed into one two-amplitude update and one diagonal phase.
@@ -294,15 +303,21 @@ __global__ void xxz_matching_backward_kernel(
                             scale(phi[reg], static_cast<T>(z_eigenvalue)));
                     }
                 }
-                block_atomic_sum(x_overlap,
-                                 reduction,
-                                 gradients + x_parameter_offset + edge);
-                block_atomic_sum(y_overlap,
-                                 reduction,
-                                 gradients + y_parameter_offset + edge);
-                block_atomic_sum(z_overlap,
-                                 reduction,
-                                 gradients + z_parameter_offset + edge);
+                if constexpr (kXxzComponentMode != 2) {
+                    block_atomic_sum(x_overlap,
+                                     reduction,
+                                     gradients + x_parameter_offset + edge);
+                }
+                if constexpr (kXxzComponentMode != 1) {
+                    block_atomic_sum(y_overlap,
+                                     reduction,
+                                     gradients + y_parameter_offset + edge);
+                }
+                if constexpr (kXxzComponentMode == 0) {
+                    block_atomic_sum(z_overlap,
+                                     reduction,
+                                     gradients + z_parameter_offset + edge);
+                }
                 RotationCoefficients<T> x =
                     coefficients[x_parameter_offset + edge];
                 RotationCoefficients<T> y =
@@ -667,15 +682,21 @@ __global__ void xxz_cross_matching_backward_kernel(
                         scale(phi[reg], static_cast<T>(z_eigenvalue)));
                 }
             }
-            block_atomic_sum(x_overlap,
-                             reduction,
-                             gradients + x_parameter_offset + edge);
-            block_atomic_sum(y_overlap,
-                             reduction,
-                             gradients + y_parameter_offset + edge);
-            block_atomic_sum(z_overlap,
-                             reduction,
-                             gradients + z_parameter_offset + edge);
+            if constexpr (kXxzComponentMode != 2) {
+                block_atomic_sum(x_overlap,
+                                 reduction,
+                                 gradients + x_parameter_offset + edge);
+            }
+            if constexpr (kXxzComponentMode != 1) {
+                block_atomic_sum(y_overlap,
+                                 reduction,
+                                 gradients + y_parameter_offset + edge);
+            }
+            if constexpr (kXxzComponentMode == 0) {
+                block_atomic_sum(z_overlap,
+                                 reduction,
+                                 gradients + z_parameter_offset + edge);
+            }
             RotationCoefficients<T> x = coefficients[x_parameter_offset + edge];
             RotationCoefficients<T> y = coefficients[y_parameter_offset + edge];
             RotationCoefficients<T> z = coefficients[z_parameter_offset + edge];

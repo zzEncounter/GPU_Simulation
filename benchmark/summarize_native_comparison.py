@@ -12,7 +12,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = Path(__file__).resolve().parent / "results"
 OUTPUT_CSV = RESULTS / "native_baseline_comparison.csv"
-OUTPUT_REPORT = ROOT / "NATIVE_BASELINE_COMPARISON.md"
+OUTPUT_REPORT = ROOT / "docs" / "experiments" / "NATIVE_BASELINE_COMPARISON.md"
 
 FIELDS = (
     "circuit",
@@ -153,7 +153,7 @@ def _joined_rows() -> list[dict[str, object]]:
 
 def _write_csv(rows: list[dict[str, object]]) -> None:
     with OUTPUT_CSV.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=FIELDS)
+        writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -290,6 +290,7 @@ def _write_report(rows: list[dict[str, object]]) -> None:
             "",
         ]
     )
+    OUTPUT_REPORT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_REPORT.write_text("\n".join(lines), encoding="utf-8")
 
 

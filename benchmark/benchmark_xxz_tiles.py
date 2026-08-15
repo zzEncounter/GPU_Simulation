@@ -30,6 +30,10 @@ FIELDS = (
     "registers_per_thread",
     "active_cta_per_sm",
     "average_ms",
+    "local_bytes_per_thread",
+    "multiprocessors",
+    "iterations",
+    "phase_pair_counts",
 )
 
 

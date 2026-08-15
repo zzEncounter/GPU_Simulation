@@ -10,6 +10,14 @@
 
 #include <stdexcept>
 
+#ifndef SAD_RZZ_FORWARD_FUSED
+#define SAD_RZZ_FORWARD_FUSED -1
+#endif
+#ifndef SAD_RZZ_BACKWARD_STRATEGY
+// -1 auto, 0 split RZ/RZZ/RX, 1 combine diagonals, 2 fuse into RX.
+#define SAD_RZZ_BACKWARD_STRATEGY -1
+#endif
+
 namespace sad {
 
 struct RzzLayerLayout {
@@ -72,6 +80,10 @@ struct CircuitExecutor<SAD_CIRCUIT_RZZ_HEA, T> {
 
     static void forward_layer_optimized(
         int layer, const ForwardCircuitContext<T>& context) {
+#if SAD_RZZ_FORWARD_FUSED == 0
+        forward_layer(layer, context);
+        return;
+#endif
         const auto layout = RzzLayerLayout::at(layer, context.qubits);
         launch_fused_non_diagonal_forward<
             T, NonDiagonalGate::RX, FusedDiagonalMode::RZ_RZZ, false>(
@@ -172,10 +184,23 @@ struct CircuitExecutor<SAD_CIRCUIT_RZZ_HEA, T> {
 
     static void backward_layer_optimized(
         int layer, const BackwardCircuitContext<T>& context) {
-        if (context.qubits <= 20 || context.qubits >= 26) {
-            backward_layer_fused(layer, context);
+#if SAD_RZZ_BACKWARD_STRATEGY == 0
+        backward_layer(layer, context);
+        return;
+#elif SAD_RZZ_BACKWARD_STRATEGY == 2
+        backward_layer_fused(layer, context);
+        return;
+#endif
+#if SAD_RZZ_BACKWARD_STRATEGY < 0
+        // Keeping RX separate avoids the fused kernel's longer live range on
+        // the measured 20q--28q range.  Small states retain the old fused path.
+        if (context.qubits >= 20) {
+            backward_layer(layer, context);
             return;
         }
+        backward_layer_fused(layer, context);
+        return;
+#endif
         const auto layout = RzzLayerLayout::at(layer, context.qubits);
         launch_rz_rzz_backward(
             context.phi->current,

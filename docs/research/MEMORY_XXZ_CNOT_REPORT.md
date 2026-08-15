@@ -47,6 +47,12 @@ Generation、SM 8.9、48 GiB，CUDA 13.2；日期为 2026-08-12，主实验使�
 普通 complex RX/RY 已在 commit `02443c4` 中设为默认；本报告没有继续修改
 生产 kernel，只加入可复现的研究基准。
 
+> **2026-08-15 更新：** 上述 `arg_l2` 收益来自旧 canonical RY 调度，不能
+> 直接叠加到后来得到的 phase 最优配置。后续隔离测量中，chunk blocking 在
+> q22--q24 的 RX/RY 正反向场景全部退化；persisting 唯一复现的收益也只有
+> 约 0.48%。这证明 L2 复用机制存在，却不足以改善实际 wall time。相关联合
+> 搜索和 dispatch 功能已删除，不再把 L2 hit 作为独立优化目标。
+
 ## 2. 数据与方法
 
 新增原始数据：
@@ -427,9 +433,8 @@ workspace 对 complex path 已分配 `phi_a/b` 与 `lambda_a/b`，fused backward
    `adjoint=true` 保持 gather；先跑 RA/SU2 baseline 和 q≥28 SU2 端到端。
 3. **高价值研究：** 实现 XXZ dependency-preserving integrated backward，再做
    XXZ-HVA 完整 step；同时把 tile8/tile10 做成 direction/q dispatch 候选。
-4. L2 access-policy 只保留实验开关；不默认 persisting。
-5. `arg_l2` 分块只有在 phase 数不增加、真实 circuit 不破坏已有 fusion、且
-   q23/q24 端到端稳定超过 5% 时才落地。
+4. 不落地 L2 access-policy dispatch，也不再把 L2 hit 作为独立调优目标。
+5. 不落地 `arg_l2` 分块；phase 搜索只依据最终 wall time 选择配置。
 6. 不采用单-buffer 逐 CNOT，也不尝试 tile12 backward。
 
 ## 8. 复现
