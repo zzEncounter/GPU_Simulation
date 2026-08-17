@@ -192,14 +192,17 @@ struct CircuitExecutor<SAD_CIRCUIT_RZZ_HEA, T> {
         return;
 #endif
 #if SAD_RZZ_BACKWARD_STRATEGY < 0
-        // Keeping RX separate avoids the fused kernel's longer live range on
-        // the measured 20q--28q range.  Small states retain the old fused path.
-        if (context.qubits >= 20) {
+        // Combined diagonal gradients win through 14q.  At 16q and from 20q
+        // upward, three ordinary diagonal passes plus RX have the shorter live
+        // range; 18q is the one measured tile boundary where full fusion wins.
+        if (context.qubits == 18) {
+            backward_layer_fused(layer, context);
+            return;
+        }
+        if (context.qubits >= 16) {
             backward_layer(layer, context);
             return;
         }
-        backward_layer_fused(layer, context);
-        return;
 #endif
         const auto layout = RzzLayerLayout::at(layer, context.qubits);
         launch_rz_rzz_backward(
@@ -248,6 +251,7 @@ struct CircuitExecutor<SAD_CIRCUIT_RZZ_HEA, T> {
             context.diagonal_lookup_at(layout.rzz_odd),
             context.selected_maps,
             context.target_masks,
+            context.target_phases,
             context.phase_count,
             context.multiprocessors,
             kAlternatePhases && (layer & 1));

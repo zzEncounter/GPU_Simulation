@@ -172,7 +172,7 @@ def _append_parameterized(
 def _build_operations(
     circuit: CircuitSpec, qubits: int, layers: int, params: np.ndarray
 ) -> tuple[NativeOperation, ...]:
-    """Build the five benchmark circuits without creating a PennyLane tape."""
+    """Build the registered benchmark circuits without creating a PennyLane tape."""
 
     operations: list[NativeOperation] = []
     name = circuit.name
@@ -258,6 +258,25 @@ def _build_operations(
                 _append_parameterized(operations, "RX", (wire,), params, beta)
         return tuple(operations)
 
+    if name == "qaoa-ns":
+        for wire in range(qubits):
+            operations.append(NativeOperation("Hadamard", (wire,)))
+        for layer in range(layers):
+            base = 2 * layer * qubits
+            for edge in range(qubits):
+                _append_parameterized(
+                    operations,
+                    "IsingZZ",
+                    (edge, (edge + 1) % qubits),
+                    params,
+                    base + qubits + edge,
+                )
+            for wire in range(qubits):
+                _append_parameterized(
+                    operations, "RX", (wire,), params, base + wire
+                )
+        return tuple(operations)
+
     if name == "xxz-hva":
         for wire in range(1, qubits, 2):
             operations.append(NativeOperation("PauliX", (wire,)))
@@ -281,6 +300,76 @@ def _build_operations(
                     )
         return tuple(operations)
 
+    if name == "mera":
+        active = list(range(qubits))
+        cursor = 0
+        while len(active) > 1:
+            for index in range(1, len(active) - 1, 2):
+                left, right = active[index], active[index + 1]
+                _append_parameterized(operations, "RY", (left,), params, cursor)
+                _append_parameterized(
+                    operations, "RY", (right,), params, cursor + 1
+                )
+                operations.append(NativeOperation("CNOT", (left, right)))
+                cursor += 2
+
+            next_active = []
+            for index in range(0, len(active) - 1, 2):
+                left, right = active[index], active[index + 1]
+                _append_parameterized(operations, "RY", (left,), params, cursor)
+                _append_parameterized(
+                    operations, "RY", (right,), params, cursor + 1
+                )
+                operations.append(NativeOperation("CNOT", (left, right)))
+                cursor += 2
+                next_active.append(right)
+            if len(active) % 2:
+                next_active.append(active[-1])
+            active = next_active
+        return tuple(operations)
+
+    if name == "equivariant-qnn":
+        participant_count = qubits if qubits % 2 == 0 else qubits + 1
+        dummy = qubits if participant_count != qubits else None
+        for layer in range(layers):
+            base = 3 * layer
+            for wire in range(qubits):
+                _append_parameterized(operations, "RX", (wire,), params, base)
+            for wire in range(qubits):
+                _append_parameterized(operations, "RY", (wire,), params, base + 1)
+            participants = list(range(participant_count))
+            for _ in range(participant_count - 1):
+                for index in range(participant_count // 2):
+                    first, second = participants[index], participants[-1 - index]
+                    if first == dummy or second == dummy:
+                        continue
+                    control, target = sorted((first, second))
+                    operations.append(NativeOperation("CNOT", (control, target)))
+                    _append_parameterized(operations, "RZ", (target,), params, base + 2)
+                    operations.append(NativeOperation("CNOT", (control, target)))
+                participants[1:] = participants[-1:] + participants[1:-1]
+        return tuple(operations)
+
+    if name == "data-reuploading":
+        for layer in range(layers):
+            base = 3 * layer * qubits
+            for wire in range(qubits):
+                _append_parameterized(operations, "RZ", (wire,), params, base + wire)
+            for wire in range(qubits):
+                _append_parameterized(
+                    operations, "RY", (wire,), params, base + qubits + wire
+                )
+            for wire in range(qubits):
+                _append_parameterized(
+                    operations, "RZ", (wire,), params, base + 2 * qubits + wire
+                )
+            parity = layer & 1
+            for left in range(parity, qubits, 2):
+                operations.append(
+                    NativeOperation("CZ", (left, (left + 1) % qubits))
+                )
+        return tuple(operations)
+
     raise ValueError(f"native Lightning runner does not support circuit {name!r}")
 
 
@@ -295,7 +384,16 @@ def _build_hamiltonian(
     def pauli_product(pauli: str, left: int, right: int) -> object:
         return tensor([named(pauli, [left]), named(pauli, [right])])
 
-    if circuit.name == "qaoa":
+    if circuit.name == "mera":
+        coefficients.append(1.0)
+        terms.append(named("PauliZ", [qubits - 1]))
+    elif circuit.name == "equivariant-qnn":
+        coefficients = [1.0 / qubits] * qubits
+        terms = [named("PauliX", [wire]) for wire in range(qubits)]
+    elif circuit.name == "data-reuploading":
+        coefficients = [1.0]
+        terms = [named("PauliZ", [0])]
+    elif circuit.name in {"qaoa", "qaoa-ns"}:
         for wire in range(qubits):
             coefficients.extend((0.5, -0.5))
             terms.extend(
@@ -392,6 +490,14 @@ def native_energy_and_grad(
         np.random.default_rng(random_seed).uniform(-math.pi, math.pi, parameter_count),
         dtype=precision_spec.real_dtype,
     )
+    if circuit_spec.name == "data-reuploading":
+        for layer in range(layers):
+            base = 3 * layer * qubits
+            for wire in range(qubits):
+                feature = 2.0 * (wire + 1) / (qubits + 1) - 1.0
+                params[base + wire] += feature
+                params[base + qubits + wire] += 0.5 * feature
+                params[base + 2 * qubits + wire] -= 0.5 * feature
     operations = _build_operations(circuit_spec, qubits, layers, params)
     parameter_sources = np.asarray(
         [

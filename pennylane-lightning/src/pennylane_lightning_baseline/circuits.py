@@ -164,6 +164,20 @@ def _qaoa(params: object, qubits: int, layers: int) -> None:
             qml.RX(beta, wires=wire)
 
 
+def _qaoa_ns(params: object, qubits: int, layers: int) -> None:
+    for wire in range(qubits):
+        qml.Hadamard(wires=wire)
+    for layer in range(layers):
+        base = 2 * layer * qubits
+        for edge in range(qubits):
+            qml.IsingZZ(
+                params[base + qubits + edge],
+                wires=(edge, (edge + 1) % qubits),
+            )
+        for wire in range(qubits):
+            qml.RX(params[base + wire], wires=wire)
+
+
 def _xxz_hva(params: object, qubits: int, layers: int) -> None:
     for wire in range(1, qubits, 2):
         qml.PauliX(wires=wire)
@@ -180,6 +194,68 @@ def _xxz_hva(params: object, qubits: int, layers: int) -> None:
                 qml.IsingZZ(params[z_offset + left], wires=wires)
 
 
+def _mera(params: object, qubits: int, layers: int) -> None:
+    active = list(range(qubits))
+    cursor = 0
+    while len(active) > 1:
+        for index in range(1, len(active) - 1, 2):
+            left, right = active[index], active[index + 1]
+            qml.RY(params[cursor], wires=left)
+            qml.RY(params[cursor + 1], wires=right)
+            qml.CNOT(wires=(left, right))
+            cursor += 2
+
+        next_active = []
+        for index in range(0, len(active) - 1, 2):
+            left, right = active[index], active[index + 1]
+            qml.RY(params[cursor], wires=left)
+            qml.RY(params[cursor + 1], wires=right)
+            qml.CNOT(wires=(left, right))
+            cursor += 2
+            next_active.append(right)
+
+        if len(active) % 2:
+            next_active.append(active[-1])
+        active = next_active
+
+
+def _equivariant_qnn(params: object, qubits: int, layers: int) -> None:
+    participant_count = qubits if qubits % 2 == 0 else qubits + 1
+    dummy = qubits if participant_count != qubits else None
+    for layer in range(layers):
+        a, b, g = (params[3 * layer + offset] for offset in range(3))
+        for wire in range(qubits):
+            qml.RX(a, wires=wire)
+        for wire in range(qubits):
+            qml.RY(b, wires=wire)
+        participants = list(range(participant_count))
+        for _ in range(participant_count - 1):
+            for index in range(participant_count // 2):
+                first, second = participants[index], participants[-1 - index]
+                if first == dummy or second == dummy:
+                    continue
+                control, target = sorted((first, second))
+                qml.CNOT(wires=(control, target))
+                qml.RZ(g, wires=target)
+                qml.CNOT(wires=(control, target))
+            participants[1:] = participants[-1:] + participants[1:-1]
+
+
+def _data_reuploading_qnn(params: object, qubits: int, layers: int) -> None:
+    for layer in range(layers):
+        base = 3 * layer * qubits
+        for wire in range(qubits):
+            qml.RZ(params[base + wire], wires=wire)
+        for wire in range(qubits):
+            qml.RY(params[base + qubits + wire], wires=wire)
+        for wire in range(qubits):
+            qml.RZ(params[base + 2 * qubits + wire], wires=wire)
+        parity = layer & 1
+        for left in range(parity, qubits, 2):
+            right = (left + 1) % qubits
+            qml.CZ(wires=(min(left, right), max(left, right)))
+
+
 def build_hamiltonian(
     qubits: int, circuit: str | CircuitSpec = "su2-hea"
 ) -> qml.Hamiltonian:
@@ -189,7 +265,9 @@ def build_hamiltonian(
     circuit_spec = get_circuit(circuit)
     coefficients: list[float] = []
     observables: list[qml.operation.Operator] = []
-    if circuit_spec.name == "qaoa":
+    if circuit_spec.name == "mera":
+        return qml.Hamiltonian([1.0], [qml.PauliZ(qubits - 1)])
+    if circuit_spec.name in {"qaoa", "qaoa-ns"}:
         for wire in range(qubits):
             coefficients.extend((0.5, -0.5))
             observables.extend(
@@ -211,6 +289,13 @@ def build_hamiltonian(
                 )
             )
         return qml.Hamiltonian(coefficients, observables)
+    if circuit_spec.name == "equivariant-qnn":
+        return qml.Hamiltonian(
+            [1.0 / qubits] * qubits,
+            [qml.PauliX(wire) for wire in range(qubits)],
+        )
+    if circuit_spec.name == "data-reuploading":
+        return qml.Hamiltonian([1.0], [qml.PauliZ(0)])
     for wire in range(qubits):
         coefficients.append(-1.0)
         observables.append(qml.PauliZ(wire) @ qml.PauliZ((wire + 1) % qubits))
@@ -249,6 +334,16 @@ register_circuit(
 )
 register_circuit(
     CircuitSpec(
+        name="qaoa-ns",
+        aliases=("qaoa_ns", "qaoa-nonshared"),
+        parameter_count_fn=lambda qubits, layers: 2 * qubits * layers,
+        builder=_qaoa_ns,
+        requires_even_qubits=True,
+        minimum_qubits=4,
+    )
+)
+register_circuit(
+    CircuitSpec(
         name="su2-hea",
         aliases=("su2",),
         parameter_count_fn=lambda qubits, layers: 2 * qubits * layers,
@@ -262,5 +357,36 @@ register_circuit(
         parameter_count_fn=lambda qubits, layers: 3 * qubits * layers,
         builder=_rzz_hea,
         requires_even_qubits=True,
+    )
+)
+register_circuit(
+    CircuitSpec(
+        name="mera",
+        parameter_count_fn=lambda qubits, layers: (
+            4 * (qubits - 1) - 2 * (qubits - 1).bit_count()
+            if layers == (qubits - 1).bit_length()
+            else 0
+        ),
+        builder=_mera,
+        minimum_qubits=2,
+    )
+)
+register_circuit(
+    CircuitSpec(
+        name="equivariant-qnn",
+        aliases=("eqnn",),
+        parameter_count_fn=lambda qubits, layers: 3 * layers,
+        builder=_equivariant_qnn,
+        minimum_qubits=2,
+    )
+)
+register_circuit(
+    CircuitSpec(
+        name="data-reuploading",
+        aliases=("data-reupload", "drqnn"),
+        parameter_count_fn=lambda qubits, layers: 3 * qubits * layers,
+        builder=_data_reuploading_qnn,
+        requires_even_qubits=True,
+        minimum_qubits=4,
     )
 )

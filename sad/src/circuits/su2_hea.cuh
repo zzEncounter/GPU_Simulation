@@ -75,6 +75,11 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
 #elif SAD_SU2_FORWARD_STRATEGY == 2
         forward_layer_phased(layer, context);
         return;
+#elif SAD_SU2_FORWARD_STRATEGY < 0
+        if (context.qubits == 10) {
+            forward_layer_phased(layer, context);
+            return;
+        }
 #endif
         const auto layout = Su2LayerLayout::at(layer, context.qubits);
         launch_fused_non_diagonal_forward<
@@ -200,9 +205,25 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
                                            context.phase_count);
             return;
         }
-        // The lookup-fused backward path loses to the split path once the
-        // state is large enough for global traffic and live range to dominate.
-        if (context.qubits >= 20) {
+        // The best path follows tile/phase boundaries rather than one monotone
+        // qubit threshold.  Lookup fusion wins at 6q and 16q, the tiny 4q case
+        // favors the phased kernel, and the remaining production shapes favor
+        // the simpler split traversal.
+        if (context.qubits == 4) {
+            const auto phased_layout = Su2LayerLayout::at(layer, context.qubits);
+            launch_phased_ry_cnot_backward(context.phi,
+                                           context.lambda,
+                                           context.rotation_coefficients,
+                                           context.gradients,
+                                           context.qubits,
+                                           phased_layout.ry,
+                                           phased_layout.rz,
+                                           context.selected_maps,
+                                           context.target_masks,
+                                           context.phase_count);
+            return;
+        }
+        if (context.qubits != 6 && context.qubits != 16) {
             backward_layer(layer, context);
             return;
         }
@@ -224,6 +245,7 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
             static_cast<const Complex<T>*>(nullptr),
             context.selected_maps,
             context.target_masks,
+            context.target_phases,
             context.phase_count,
             context.multiprocessors,
             kAlternatePhases && (layer & 1));
@@ -248,6 +270,7 @@ struct CircuitExecutor<SAD_CIRCUIT_SU2_HEA, T> {
             static_cast<const Complex<T>*>(nullptr),
             context.selected_maps,
             context.target_masks,
+            context.target_phases,
             context.phase_count,
             context.multiprocessors,
             kAlternatePhases && (layer & 1));

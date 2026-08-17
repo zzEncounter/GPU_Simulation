@@ -29,6 +29,18 @@ decltype(auto) visit_circuit(int circuit, Function&& function) {
         case SAD_CIRCUIT_XXZ_HVA:
             return std::forward<Function>(function)(
                 std::integral_constant<int, SAD_CIRCUIT_XXZ_HVA>{});
+        case SAD_CIRCUIT_MERA:
+            return std::forward<Function>(function)(
+                std::integral_constant<int, SAD_CIRCUIT_MERA>{});
+        case SAD_CIRCUIT_EQUIVARIANT_QNN:
+            return std::forward<Function>(function)(
+                std::integral_constant<int, SAD_CIRCUIT_EQUIVARIANT_QNN>{});
+        case SAD_CIRCUIT_DATA_REUPLOADING:
+            return std::forward<Function>(function)(
+                std::integral_constant<int, SAD_CIRCUIT_DATA_REUPLOADING>{});
+        case SAD_CIRCUIT_QAOA_NS:
+            return std::forward<Function>(function)(
+                std::integral_constant<int, SAD_CIRCUIT_QAOA_NS>{});
         default:
             throw std::invalid_argument("unknown circuit id");
     }

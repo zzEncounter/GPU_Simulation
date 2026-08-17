@@ -14,7 +14,11 @@
 #include "../circuits/rzz_hea.cuh"
 #include "../circuits/su2_hea.cuh"
 #include "../circuits/qaoa.cuh"
+#include "../circuits/qaoa_ns.cuh"
 #include "../circuits/xxz_hva.cuh"
+#include "../circuits/mera.cuh"
+#include "../circuits/equivariant_qnn.cuh"
+#include "../circuits/data_reuploading.cuh"
 
 #include <algorithm>
 #include <cstddef>
@@ -67,6 +71,30 @@ template <int Circuit>
 inline size_t expected_parameter_count(int qubits, int layers) {
     if constexpr (Circuit == SAD_CIRCUIT_QAOA) {
         return static_cast<size_t>(2) * layers;
+    }
+    if constexpr (Circuit == SAD_CIRCUIT_QAOA_NS) {
+        return static_cast<size_t>(2) * qubits * layers;
+    }
+    if constexpr (Circuit == SAD_CIRCUIT_MERA) {
+        int expected_layers = 0;
+        for (int active = qubits; active > 1; active = (active + 1) / 2) {
+            ++expected_layers;
+        }
+        if (layers != expected_layers) {
+            throw std::invalid_argument(
+                "MERA layers must equal ceil(log2(qubits))");
+        }
+        int set_bits = 0;
+        for (int value = qubits - 1; value != 0; value >>= 1) {
+            set_bits += value & 1;
+        }
+        return static_cast<size_t>(4 * (qubits - 1) - 2 * set_bits);
+    }
+    if constexpr (Circuit == SAD_CIRCUIT_EQUIVARIANT_QNN) {
+        return static_cast<size_t>(3) * layers;
+    }
+    if constexpr (Circuit == SAD_CIRCUIT_DATA_REUPLOADING) {
+        return static_cast<size_t>(3) * qubits * layers;
     }
     return static_cast<size_t>(
                CircuitExecutor<Circuit, double>::kParametersPerQubitLayer) *
@@ -217,6 +245,7 @@ void run_backward(int circuit,
                   double* gradients,
                   const int* selected_maps,
                   const int* target_masks,
+                  const int* target_phases,
                   int phase_count,
                   const int* xxz_even_selected_maps,
                   const int* xxz_even_pair_counts,
@@ -238,6 +267,7 @@ void run_backward(int circuit,
         gradients,
         selected_maps,
         target_masks,
+        target_phases,
         phase_count,
         xxz_even_selected_maps,
         xxz_even_pair_counts,

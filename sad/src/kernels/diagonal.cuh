@@ -6,6 +6,8 @@
 
 namespace sad {
 
+constexpr int kNonsharedRingRzzLookupSize = 2;
+
 __device__ __forceinline__ int ring_domain_wall_count(uint64_t index,
                                                        int qubits) {
     const uint64_t mask = (1ull << qubits) - 1ull;
@@ -421,6 +423,207 @@ void launch_shared_ring_rzz_backward(Complex<T>* phi,
                                      int grid_size) {
     shared_ring_rzz_backward_kernel<T>
         <<<grid_size, kSharedDiagonalBlockThreads>>>(phi,
+                                               lambda,
+                                               phase_lookup,
+                                               gradients,
+                                               state_size,
+                                               qubits,
+                                               parameter_offset);
+    SAD_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+__global__ void nonshared_ring_rzz_forward_kernel(
+    Complex<T>* state,
+    const Complex<T>* phase_lookup,
+    uint64_t state_size,
+    int qubits) {
+    for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
+         index < state_size;
+         index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+        Complex<T> factor = make_complex<T>(static_cast<T>(1), static_cast<T>(0));
+        for (int edge = 0; edge < qubits; ++edge) {
+            const int left = edge;
+            const int right = (edge + 1) % qubits;
+            const bool differs = ((index >> left) & 1ull) !=
+                                 ((index >> right) & 1ull);
+            const Complex<T> edge_factor =
+                phase_lookup[static_cast<size_t>(edge) *
+                                 kNonsharedRingRzzLookupSize +
+                             (differs ? 1 : 0)];
+            factor = multiply(factor, edge_factor);
+        }
+        state[index] = multiply(state[index], factor);
+    }
+}
+
+template <typename T>
+void launch_nonshared_ring_rzz_forward(Complex<T>* state,
+                                       const Complex<T>* phase_lookup,
+                                       uint64_t state_size,
+                                       int qubits,
+                                       int grid_size) {
+    nonshared_ring_rzz_forward_kernel<T>
+        <<<grid_size, kOrdinaryBlockThreads>>>(state,
+                                               phase_lookup,
+                                               state_size,
+                                               qubits);
+    SAD_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+__global__ void nonshared_ring_rzz_forward_tile_kernel(
+    Complex<T>* state,
+    const Complex<T>* phase_lookup,
+    uint64_t state_size,
+    int qubits) {
+    const uint64_t tile_stride =
+        static_cast<uint64_t>(blockDim.x) * kForwardRegisterAmplitudes;
+    const uint64_t tile_start =
+        (static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x) *
+        kForwardRegisterAmplitudes;
+    const uint64_t grid_stride =
+        static_cast<uint64_t>(gridDim.x) * tile_stride;
+
+    for (uint64_t base = tile_start; base < state_size; base += grid_stride) {
+#pragma unroll
+        for (int reg = 0; reg < kForwardRegisterAmplitudes; ++reg) {
+            const uint64_t index = base + reg;
+            if (index >= state_size) {
+                continue;
+            }
+            Complex<T> factor =
+                make_complex<T>(static_cast<T>(1), static_cast<T>(0));
+            for (int edge = 0; edge < qubits; ++edge) {
+                const int right = (edge + 1) % qubits;
+                const bool differs = ((index >> edge) & 1ull) !=
+                                     ((index >> right) & 1ull);
+                factor = multiply(
+                    factor,
+                    phase_lookup[static_cast<size_t>(edge) *
+                                     kNonsharedRingRzzLookupSize +
+                                 (differs ? 1 : 0)]);
+            }
+            state[index] = multiply(state[index], factor);
+        }
+    }
+}
+
+template <typename T>
+void launch_nonshared_ring_rzz_forward_tile(Complex<T>* state,
+                                            const Complex<T>* phase_lookup,
+                                            uint64_t state_size,
+                                            int qubits,
+                                            int multiprocessors) {
+    const uint64_t tile_amplitudes =
+        static_cast<uint64_t>(kForwardBlockThreads) *
+        kForwardRegisterAmplitudes;
+    const uint64_t tile_count =
+        (state_size + tile_amplitudes - 1) / tile_amplitudes;
+    // A single small tile leaves most register-kernel threads inactive. Keep
+    // the ordinary path for this case; larger states benefit from batching
+    // multiple amplitudes per thread.
+    if (tile_count <= 1) {
+        const uint64_t ordinary_count =
+            (state_size + kOrdinaryBlockThreads - 1) /
+            kOrdinaryBlockThreads;
+        const int ordinary_grid = static_cast<int>(std::max<uint64_t>(
+            1, std::min<uint64_t>(ordinary_count,
+                                  static_cast<uint64_t>(multiprocessors) * 4ull)));
+        launch_nonshared_ring_rzz_forward<T>(state,
+                                             phase_lookup,
+                                             state_size,
+                                             qubits,
+                                             ordinary_grid);
+        return;
+    }
+    const int grid_size = static_cast<int>(std::min<uint64_t>(
+        tile_count, static_cast<uint64_t>(multiprocessors) * 4ull));
+    nonshared_ring_rzz_forward_tile_kernel<T>
+        <<<grid_size, kForwardBlockThreads>>>(state,
+                                               phase_lookup,
+                                               state_size,
+                                               qubits);
+    SAD_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+__global__ void nonshared_ring_rzz_backward_kernel(
+    Complex<T>* phi_state,
+    Complex<T>* lambda_state,
+    const Complex<T>* phase_lookup,
+    double* gradients,
+    uint64_t state_size,
+    int qubits,
+    int parameter_offset) {
+    __shared__ double overlaps[kMaxQubits * kOrdinaryBlockThreads];
+    __shared__ double warp_partials[kMaxQubits * kOrdinaryWarpsPerBlock];
+    const int tid = threadIdx.x;
+    for (int edge = 0; edge < qubits; ++edge) {
+        overlaps[edge * kOrdinaryBlockThreads + tid] = 0.0;
+    }
+    __syncthreads();
+
+    for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
+         index < state_size;
+         index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+        const Complex<T> phi = phi_state[index];
+        const Complex<T> lambda = lambda_state[index];
+        const double base_overlap = imag_conjugate_product(lambda, phi);
+        Complex<T> factor = make_complex<T>(static_cast<T>(1), static_cast<T>(0));
+        for (int edge = 0; edge < qubits; ++edge) {
+            const int right = (edge + 1) % qubits;
+            const bool differs = ((index >> edge) & 1ull) !=
+                                 ((index >> right) & 1ull);
+            const int eigenvalue = differs ? -1 : 1;
+            overlaps[edge * kOrdinaryBlockThreads + tid] +=
+                base_overlap * static_cast<double>(eigenvalue);
+            factor = multiply(
+                factor,
+                phase_lookup[static_cast<size_t>(edge) *
+                                 kNonsharedRingRzzLookupSize +
+                             (differs ? 1 : 0)]);
+        }
+        const Complex<T> inverse_factor{factor.real, -factor.imag};
+        phi_state[index] = multiply(phi, inverse_factor);
+        lambda_state[index] = multiply(lambda, inverse_factor);
+    }
+
+    const int lane = tid & 31;
+    const int warp = tid >> 5;
+    for (int edge = 0; edge < qubits; ++edge) {
+        const double sum = warp_sum(
+            overlaps[edge * kOrdinaryBlockThreads + tid]);
+        if (lane == 0) {
+            warp_partials[edge * kOrdinaryWarpsPerBlock + warp] = sum;
+        }
+    }
+    __syncthreads();
+    if (warp == 0) {
+        for (int edge = 0; edge < qubits; ++edge) {
+            double value = lane < kOrdinaryWarpsPerBlock
+                               ? warp_partials[
+                                     edge * kOrdinaryWarpsPerBlock + lane]
+                               : 0.0;
+            value = warp_sum(value);
+            if (lane == 0) {
+                atomicAdd(gradients + parameter_offset + edge, value);
+            }
+        }
+    }
+}
+
+template <typename T>
+void launch_nonshared_ring_rzz_backward(Complex<T>* phi,
+                                        Complex<T>* lambda,
+                                        const Complex<T>* phase_lookup,
+                                        double* gradients,
+                                        uint64_t state_size,
+                                        int qubits,
+                                        int parameter_offset,
+                                        int grid_size) {
+    nonshared_ring_rzz_backward_kernel<T>
+        <<<grid_size, kOrdinaryBlockThreads>>>(phi,
                                                lambda,
                                                phase_lookup,
                                                gradients,

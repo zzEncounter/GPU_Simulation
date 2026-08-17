@@ -1,4 +1,4 @@
-"""Paired A/B benchmark for selected versus uniform SAD kernel parameters."""
+"""Paired A/B benchmark for selected versus conservative SAD parameters."""
 
 from __future__ import annotations
 
@@ -34,6 +34,10 @@ FIELDS = (
     "warmup_steps",
     "selected_variant",
     "default_variant",
+    "selected_forward_phase_plan",
+    "default_forward_phase_plan",
+    "selected_backward_phase_plan",
+    "default_backward_phase_plan",
     "selected_median_ms",
     "default_median_ms",
     "default_over_selected",
@@ -74,11 +78,29 @@ def run(circuit: str, qubits: int, *, fixed: bool):
 
 def differing_scenarios() -> list[tuple[str, int]]:
     result: list[tuple[str, int]] = []
-    for circuit_id, circuit in enumerate(benchmark_sad.CIRCUITS):
-        for qubits in benchmark_sad.QUBITS:
-            selected, _ = sad_runner._select_library(circuit_id, qubits, "optimized")
-            if selected != "f128r2_b128r2":
-                result.append((circuit, qubits))
+    previous = os.environ.pop("SAD_DISABLE_VARIANT_DISPATCH", None)
+    try:
+        for circuit_id, circuit in enumerate(benchmark_sad.CIRCUITS):
+            for qubits in benchmark_sad.QUBITS:
+                selected, _ = sad_runner._select_library(
+                    circuit_id, qubits, "optimized"
+                )
+                selected_plans = sad_runner._select_phase_plans(
+                    circuit_id, qubits, "optimized"
+                )
+                os.environ["SAD_DISABLE_VARIANT_DISPATCH"] = "1"
+                default, _ = sad_runner._select_library(
+                    circuit_id, qubits, "optimized"
+                )
+                default_plans = sad_runner._select_phase_plans(
+                    circuit_id, qubits, "optimized"
+                )
+                os.environ.pop("SAD_DISABLE_VARIANT_DISPATCH", None)
+                if (selected, selected_plans) != (default, default_plans):
+                    result.append((circuit, qubits))
+    finally:
+        if previous is not None:
+            os.environ["SAD_DISABLE_VARIANT_DISPATCH"] = previous
     return result
 
 
@@ -132,6 +154,10 @@ def main() -> None:
                     "warmup_steps": 1,
                     "selected_variant": selected.kernel_variant,
                     "default_variant": default.kernel_variant,
+                    "selected_forward_phase_plan": selected.forward_phase_plan,
+                    "default_forward_phase_plan": default.forward_phase_plan,
+                    "selected_backward_phase_plan": selected.backward_phase_plan,
+                    "default_backward_phase_plan": default.backward_phase_plan,
                     "selected_median_ms": selected_ms,
                     "default_median_ms": default_ms,
                     "default_over_selected": default_ms / selected_ms,

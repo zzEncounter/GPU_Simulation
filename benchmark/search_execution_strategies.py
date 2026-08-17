@@ -191,6 +191,31 @@ def quick_variants() -> tuple[Variant, ...]:
     )
 
 
+def production_variants() -> tuple[Variant, ...]:
+    """Sparse m1 shape screen used before phase and mailbox refinement.
+
+    This intentionally includes 7--11 bit tiles and several ways to obtain
+    the same tile width.  Mailbox partitioning is held at m1 here: crossing
+    every shape with every mailbox divisor was the dominant source of the
+    old multi-hour search, while mailbox only needs to be revisited for the
+    few shapes that survive this stage.
+    """
+
+    return (
+        Variant(32, 2),   # L7
+        Variant(32, 3),   # L8
+        Variant(64, 2),   # L8
+        Variant(32, 4),   # L9
+        Variant(64, 3),   # L9
+        Variant(128, 2),  # L9: conservative production baseline
+        Variant(64, 4),   # L10
+        Variant(128, 3),  # L10
+        Variant(256, 2),  # L10
+        Variant(64, 5),   # L11
+        Variant(128, 4),  # L11
+    )
+
+
 PRESETS = {
     "quick": Preset(
         qubits=(20, 24),
@@ -200,6 +225,15 @@ PRESETS = {
         shape_survivors=3,
         schedules_per_family=3,
         extra_phases=0,
+    ),
+    "production": Preset(
+        qubits=(8, 12, 16, 20, 24, 26, 28),
+        variants=production_variants(),
+        repetitions=3,
+        iterations=6,
+        shape_survivors=4,
+        schedules_per_family=3,
+        extra_phases=1,
     ),
     "standard": Preset(
         qubits=(12, 16, 20, 24, 26),
@@ -368,8 +402,8 @@ def candidate_schedules(
 
 def _parse_qubits(value: str) -> tuple[int, ...]:
     result = tuple(int(item) for item in value.split(","))
-    if not result or any(item < 7 or item > 30 for item in result):
-        raise argparse.ArgumentTypeError("qubits must be comma-separated 7..30")
+    if not result or any(item < 4 or item > 30 for item in result):
+        raise argparse.ArgumentTypeError("qubits must be comma-separated 4..30")
     return result
 
 
@@ -489,8 +523,9 @@ def _shape_jobs(
         variants, qubits, ("rx", "ry"), ("forward", "backward")
     ):
         yield variant, q, gate, direction, "compact", "full", None
-        yield variant, q, gate, direction, "fixed", "full-fixed", None
-        if variant.warp_bits:
+        if q >= 5:
+            yield variant, q, gate, direction, "fixed", "full-fixed", None
+        if variant.warp_bits and q >= 6:
             yield variant, q, gate, direction, "pairs", "full-pairs", None
 
 
@@ -523,6 +558,8 @@ def _calibration_case(
                 "low",
                 "none" if target_spec == "L0R0W0" else target_spec,
         )
+    if q < 5:
+        return
     fixed_classes = {
             "L0R0W0",
             "L0R1W0",
@@ -554,6 +591,54 @@ def _calibration_jobs(
     for (gate, direction, q), variants in sorted(survivors.items()):
         for variant in variants:
             yield from _calibration_case(variant, q, gate, direction)
+
+
+def position_starts(qubits: int, capacity: int, reserved_low: int) -> tuple[int, ...]:
+    """Return phase positions that distinguish low, high, and still-higher bits.
+
+    Full-capacity windows follow the natural phase stride.  The last legal
+    window is included even when it is not stride aligned, so the scan always
+    reaches the most-significant qubits.
+    """
+
+    last = qubits - capacity
+    if capacity < 1 or last < reserved_low:
+        return ()
+    starts = list(range(reserved_low, last + 1, capacity))
+    if starts[-1] != last:
+        starts.append(last)
+    return tuple(starts)
+
+
+def _position_jobs(
+    survivors: dict[tuple[str, str, int], tuple[Variant, ...]]
+) -> Iterable[tuple[Variant, int, str, str, str, str, str | None]]:
+    """Measure isolated phases by bit position and continuity family.
+
+    Each job times only one RX/RY phase in one direction.  It intentionally
+    does not combine forward and backward scores or infer a wall-time winner.
+    """
+
+    for (gate, direction, q), variants in sorted(survivors.items()):
+        for variant in variants:
+            families = (
+                ("compact", variant.tile_bits, 0, "range"),
+                ("fixed", variant.tile_bits - 5, 5, "fixed"),
+                ("pairs", variant.tile_bits - 6, 6, "pairs"),
+            )
+            for family, capacity, reserved_low, prefix in families:
+                if family == "pairs" and variant.warp_bits == 0:
+                    continue
+                for first in position_starts(q, capacity, reserved_low):
+                    yield (
+                        variant,
+                        q,
+                        gate,
+                        direction,
+                        family,
+                        f"{prefix}:{first}",
+                        None,
+                    )
 
 
 def _median_rows(path: Path, stage: str) -> dict[tuple[str, ...], float]:
@@ -624,6 +709,8 @@ def _select_scenario_survivors(
     by_scenario: dict[tuple[str, str, int], dict[str, float]] = {}
     for key, value in medians.items():
         variant, gate, direction, qubits, _family, _candidate = key
+        if variant not in by_name:
+            continue
         best = by_scenario.setdefault((gate, direction, int(qubits)), {})
         best[variant] = min(value, best.get(variant, math.inf))
     result: dict[tuple[str, str, int], tuple[Variant, ...]] = {}
@@ -869,7 +956,7 @@ def main() -> None:
     parser.add_argument(
         "--stage",
         action="append",
-        choices=("shape", "calibration", "schedule"),
+        choices=("shape", "calibration", "position", "schedule"),
         help="repeat to select stages; default runs all stages",
     )
     parser.add_argument("--qubits", type=_parse_qubits)
@@ -989,6 +1076,11 @@ def main() -> None:
     scenario_survivors = _select_scenario_survivors(
         args.output, variants, survivor_count
     )
+    scenario_survivors = {
+        scenario: values
+        for scenario, values in scenario_survivors.items()
+        if scenario[2] in qubits
+    }
     survivors = tuple(
         sorted(
             {
@@ -999,19 +1091,26 @@ def main() -> None:
             key=lambda item: item.name,
         )
     ) or global_survivors
-    if not scenario_survivors:
-        scenario_survivors = {
-            (gate, direction, q): survivors
-            for gate, direction, q in itertools.product(
-                ("rx", "ry"), ("forward", "backward"), qubits
-            )
-        }
+    for gate, direction, q in itertools.product(
+        ("rx", "ry"), ("forward", "backward"), qubits
+    ):
+        scenario_survivors.setdefault((gate, direction, q), survivors)
     print("survivors:", ", ".join(item.name for item in survivors))
     if "calibration" in stages:
         compile_many(survivors)
         _run_jobs(
             stage="calibration",
             jobs=_calibration_jobs(scenario_survivors),
+            binaries=binaries,
+            output=args.output,
+            repetitions=repetitions,
+            iterations=iterations,
+        )
+    if "position" in stages:
+        compile_many(survivors)
+        _run_jobs(
+            stage="position",
+            jobs=_position_jobs(scenario_survivors),
             binaries=binaries,
             output=args.output,
             repetitions=repetitions,

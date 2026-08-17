@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace sad {
@@ -23,6 +24,8 @@ struct RunConfig {
     int steps;
     int warmup_steps;
     size_t parameter_count;
+    std::string forward_phase_plan;
+    std::string backward_phase_plan;
 };
 
 struct DeviceRunInfo {
@@ -30,6 +33,37 @@ struct DeviceRunInfo {
     size_t free_before = 0;
     size_t total_memory = 0;
 };
+
+inline bool build_configured_phase_maps(
+    const std::string& plan,
+    const char* label,
+    int qubits,
+    int tile_bits,
+    int register_bits,
+    std::vector<int>* selected_maps,
+    std::vector<int>* target_masks) {
+    if (plan.empty()) return false;
+    const size_t separator = plan.find(':');
+    if (separator == std::string::npos) {
+        throw std::invalid_argument(
+            std::string(label) +
+            " must be family:LxRyWz-LxRyWz-...");
+    }
+    const std::string family = plan.substr(0, separator);
+    std::vector<PhaseTargetClasses> phases;
+    if (!parse_phase_class_plan(plan.substr(separator + 1), &phases) ||
+        !build_class_phase_maps(qubits,
+                                tile_bits,
+                                register_bits,
+                                family,
+                                phases,
+                                selected_maps,
+                                target_masks)) {
+        throw std::invalid_argument(
+            std::string("invalid ") + label + " for selected tile shape");
+    }
+    return true;
+}
 
 inline auto prepare_device(int device_id) -> DeviceRunInfo {
     SAD_CUDA_CHECK(cudaSetDevice(device_id));
@@ -93,6 +127,7 @@ struct PreparedWorkspace {
     DeviceBuffer<int> forward_target_masks;
     DeviceBuffer<int> backward_selected_maps;
     DeviceBuffer<int> backward_target_masks;
+    DeviceBuffer<int> backward_target_phases;
     DeviceBuffer<int> forward_xxz_even_selected_maps;
     DeviceBuffer<int> forward_xxz_even_pair_counts;
     DeviceBuffer<int> forward_xxz_odd_selected_maps;
@@ -157,19 +192,35 @@ void prepare_workspace(PreparedWorkspace<T>* workspace,
     std::vector<int> backward_xxz_even_pair_counts;
     std::vector<int> backward_xxz_odd_selected_maps;
     std::vector<int> backward_xxz_odd_pair_counts;
-    build_phase_maps(config.qubits,
-                     kForwardTileBits,
-                     kForwardFixedLowLanes,
-                     &forward_selected_maps,
-                     &forward_target_masks);
-    build_phase_maps(config.qubits,
-                     kTileBits,
-                     kFixedLowLanes ||
-                         ((config.circuit == SAD_CIRCUIT_RA_HEA ||
-                           config.circuit == SAD_CIRCUIT_SU2_HEA) &&
-                          config.qubits >= 18),
-                     &backward_selected_maps,
-                     &backward_target_masks);
+    if (!build_configured_phase_maps(config.forward_phase_plan,
+                                      "forward phase plan",
+                                      config.qubits,
+                                      kForwardTileBits,
+                                      kForwardRegisterBits,
+                                      &forward_selected_maps,
+                                      &forward_target_masks)) {
+        build_phase_maps(config.qubits,
+                         kForwardTileBits,
+                         kForwardFixedLowLanes,
+                         &forward_selected_maps,
+                         &forward_target_masks);
+    }
+    if (!build_configured_phase_maps(config.backward_phase_plan,
+                                      "backward phase plan",
+                                      config.qubits,
+                                      kTileBits,
+                                      kRegisterBits,
+                                      &backward_selected_maps,
+                                      &backward_target_masks)) {
+        build_phase_maps(config.qubits,
+                         kTileBits,
+                         kFixedLowLanes ||
+                             ((config.circuit == SAD_CIRCUIT_RA_HEA ||
+                               config.circuit == SAD_CIRCUIT_SU2_HEA) &&
+                              config.qubits >= 18),
+                         &backward_selected_maps,
+                         &backward_target_masks);
+    }
     if (config.circuit == SAD_CIRCUIT_XXZ_HVA) {
         if constexpr (kXxzCrossMatching) {
             build_xxz_cross_matching_maps(
@@ -213,6 +264,11 @@ void prepare_workspace(PreparedWorkspace<T>* workspace,
         static_cast<int>(forward_target_masks.size());
     workspace->backward_phase_count =
         static_cast<int>(backward_target_masks.size());
+    const std::vector<int> backward_target_phases =
+        build_target_phase_owners(config.qubits,
+                                  kTileBits,
+                                  backward_selected_maps,
+                                  backward_target_masks);
     if constexpr (kXxzCrossMatching) {
         workspace->forward_xxz_even_phase_count =
             std::max(0,
@@ -236,6 +292,7 @@ void prepare_workspace(PreparedWorkspace<T>* workspace,
     workspace->forward_target_masks.allocate(forward_target_masks.size());
     workspace->backward_selected_maps.allocate(backward_selected_maps.size());
     workspace->backward_target_masks.allocate(backward_target_masks.size());
+    workspace->backward_target_phases.allocate(backward_target_phases.size());
     workspace->forward_xxz_even_selected_maps.allocate(
         forward_xxz_even_selected_maps.size());
     workspace->forward_xxz_even_pair_counts.allocate(
@@ -283,6 +340,10 @@ void prepare_workspace(PreparedWorkspace<T>* workspace,
     SAD_CUDA_CHECK(cudaMemcpy(workspace->backward_target_masks.get(),
                               backward_target_masks.data(),
                               workspace->backward_target_masks.bytes(),
+                              cudaMemcpyHostToDevice));
+    SAD_CUDA_CHECK(cudaMemcpy(workspace->backward_target_phases.get(),
+                              backward_target_phases.data(),
+                              workspace->backward_target_phases.bytes(),
                               cudaMemcpyHostToDevice));
     const auto copy_ints = [](DeviceBuffer<int>* destination,
                               const std::vector<int>& source) {

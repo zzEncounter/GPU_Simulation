@@ -158,6 +158,7 @@ struct CircuitExecutor<SAD_CIRCUIT_RA_HEA, T> {
             static_cast<const Complex<T>*>(nullptr),
             context.selected_maps,
             context.target_masks,
+            context.target_phases,
             context.phase_count,
             context.multiprocessors,
             kAlternatePhases && (layer & 1));
@@ -182,6 +183,7 @@ struct CircuitExecutor<SAD_CIRCUIT_RA_HEA, T> {
             static_cast<const Complex<T>*>(nullptr),
             context.selected_maps,
             context.target_masks,
+            context.target_phases,
             context.phase_count,
             context.multiprocessors,
             kAlternatePhases && (layer & 1));

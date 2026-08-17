@@ -55,7 +55,8 @@ void run_step(PreparedWorkspace<T>* workspace,
                     workspace->state_size,
                     config.qubits,
                     workspace->energy.get());
-        } else if (config.circuit == SAD_CIRCUIT_QAOA) {
+        } else if (config.circuit == SAD_CIRCUIT_QAOA ||
+                   config.circuit == SAD_CIRCUIT_QAOA_NS) {
             qaoa_cost_hamiltonian_kernel<T>
                 <<<workspace->ordinary_grid, kOrdinaryBlockThreads>>>(
                     phi.current,
@@ -70,6 +71,24 @@ void run_step(PreparedWorkspace<T>* workspace,
                     lambda.current,
                     workspace->state_size,
                     config.qubits,
+                    workspace->energy.get());
+        } else if (config.circuit == SAD_CIRCUIT_MERA) {
+            mera_hamiltonian_kernel<T>
+                <<<workspace->ordinary_grid, kOrdinaryBlockThreads>>>(
+                    phi.current,
+                    lambda.current,
+                    workspace->state_size,
+                    config.qubits - 1,
+                    workspace->energy.get());
+        } else if (config.circuit == SAD_CIRCUIT_EQUIVARIANT_QNN) {
+            equivariant_qnn_hamiltonian_kernel<T>
+                <<<workspace->ordinary_grid, kOrdinaryBlockThreads>>>(
+                    phi.current, lambda.current, workspace->state_size,
+                    config.qubits, workspace->energy.get());
+        } else if (config.circuit == SAD_CIRCUIT_DATA_REUPLOADING) {
+            data_reuploading_hamiltonian_kernel<T>
+                <<<workspace->ordinary_grid, kOrdinaryBlockThreads>>>(
+                    phi.current, lambda.current, workspace->state_size,
                     workspace->energy.get());
         } else {
             hamiltonian_kernel<T>
@@ -101,6 +120,7 @@ void run_step(PreparedWorkspace<T>* workspace,
                      workspace->gradients.get(),
                      workspace->backward_selected_maps.get(),
                      workspace->backward_target_masks.get(),
+                     workspace->backward_target_phases.get(),
                      workspace->backward_phase_count,
                      workspace->backward_xxz_even_selected_maps.get(),
                      workspace->backward_xxz_even_pair_counts.get(),
@@ -145,6 +165,8 @@ void run_typed(int circuit,
                int device_id,
                const T* host_parameters,
                size_t parameter_count,
+               const char* forward_phase_plan,
+               const char* backward_phase_plan,
                double* out_energy,
                T* out_gradient,
                double* out_forward_times,
@@ -152,7 +174,14 @@ void run_typed(int circuit,
                double* out_backward_times,
                SadMemoryInfo* out_memory) {
     const RunConfig config{
-        circuit, qubits, layers, steps, warmup_steps, parameter_count};
+        circuit,
+        qubits,
+        layers,
+        steps,
+        warmup_steps,
+        parameter_count,
+        forward_phase_plan == nullptr ? "" : forward_phase_plan,
+        backward_phase_plan == nullptr ? "" : backward_phase_plan};
     validate_inputs(circuit,
                     qubits,
                     layers,

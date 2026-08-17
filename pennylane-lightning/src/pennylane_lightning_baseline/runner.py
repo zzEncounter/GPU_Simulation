@@ -182,6 +182,14 @@ def energy_and_grad(
     raw_params = rng.uniform(-math.pi, math.pi, parameter_count).astype(
         precision_spec.real_dtype, copy=False
     )
+    if circuit_spec.name == "data-reuploading":
+        for layer in range(layers):
+            base = 3 * layer * qubits
+            for wire in range(qubits):
+                feature = 2.0 * (wire + 1) / (qubits + 1) - 1.0
+                raw_params[base + wire] += feature
+                raw_params[base + qubits + wire] += 0.5 * feature
+                raw_params[base + 2 * qubits + wire] -= 0.5 * feature
     params = pnp.array(raw_params, requires_grad=True)
 
     memory_before = take_memory_snapshot()

@@ -15,6 +15,7 @@ __device__ __forceinline__ void accumulate_diagonal_gradients(
     uint64_t tile_base,
     const int* selected,
     int target_mask,
+    const int* target_phases,
     int phase,
     int tile_bits,
     int qubits,
@@ -69,10 +70,8 @@ __device__ __forceinline__ void accumulate_diagonal_gradients(
                   Mode == FusedDiagonalMode::RZ_RZZ) {
         for (int left = 0; left < qubits; ++left) {
             const int right = (left + 1) % qubits;
-            const int left_phase = target_phase_for_qubit(
-                left, kTileBits, kFixedLowLanes);
-            const int right_phase = target_phase_for_qubit(
-                right, kTileBits, kFixedLowLanes);
+            const int left_phase = target_phases[left];
+            const int right_phase = target_phases[right];
             const int owner_phase = reverse_phases
                                         ? min(left_phase, right_phase)
                                         : max(left_phase, right_phase);
@@ -136,10 +135,8 @@ __device__ __forceinline__ void accumulate_diagonal_gradients(
                       Mode == FusedDiagonalMode::RZ_RZZ) {
             for (int left = 0; left < qubits; ++left) {
                 const int right = (left + 1) % qubits;
-                const int left_phase = target_phase_for_qubit(
-                    left, kTileBits, kFixedLowLanes);
-                const int right_phase = target_phase_for_qubit(
-                    right, kTileBits, kFixedLowLanes);
+                const int left_phase = target_phases[left];
+                const int right_phase = target_phases[right];
                 const int owner_phase = reverse_phases
                                             ? min(left_phase, right_phase)
                                             : max(left_phase, right_phase);
@@ -185,6 +182,7 @@ __global__ void fused_non_diagonal_backward_kernel(
     const Complex<T>* rzz_odd_lookup,
     const int* selected_maps,
     const int* target_masks,
+    const int* target_phases,
     int phase_count,
     bool reverse_phases,
     int single_phase_index,
@@ -271,6 +269,7 @@ __global__ void fused_non_diagonal_backward_kernel(
                 tile_base,
                 selected,
                 target_masks[phase],
+                target_phases,
                 logical_phase,
                 tile_bits,
                 qubits,
@@ -337,6 +336,7 @@ void launch_fused_non_diagonal_backward(
     const Complex<T>* rzz_odd_lookup,
     const int* selected_maps,
     const int* target_masks,
+    const int* target_phases,
     int phase_count,
     int multiprocessors,
     bool reverse_phases = false) {
@@ -375,6 +375,7 @@ void launch_fused_non_diagonal_backward(
             const_cast<Complex<T>**>(&rzz_odd_lookup),
             const_cast<int**>(&selected_maps),
             const_cast<int**>(&target_masks),
+            const_cast<int**>(&target_phases),
             &phase_count,
             &reverse_phases,
             &single_phase_index,
@@ -406,6 +407,7 @@ void launch_fused_non_diagonal_backward(
                 rzz_odd_lookup,
                 selected_maps + phase * kTileBits,
                 target_masks + phase,
+                target_phases,
                 1,
                 reverse_phases,
                 phase,

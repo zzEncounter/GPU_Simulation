@@ -19,12 +19,6 @@ using namespace sad;
 
 namespace {
 
-struct TargetClasses {
-    int lane = 0;
-    int reg = 0;
-    int warp = 0;
-};
-
 bool parse_counts(const std::string& value, std::vector<int>* counts) {
     std::stringstream stream(value);
     std::string token;
@@ -36,26 +30,6 @@ bool parse_counts(const std::string& value, std::vector<int>* counts) {
         }
     }
     return !counts->empty();
-}
-
-bool parse_class_plan(const std::string& value,
-                      std::vector<TargetClasses>* phases) {
-    std::stringstream stream(value);
-    std::string phase;
-    while (std::getline(stream, phase, '-')) {
-        TargetClasses classes;
-        char extra = 0;
-        if (std::sscanf(phase.c_str(), "L%dR%dW%d%c",
-                        &classes.lane,
-                        &classes.reg,
-                        &classes.warp,
-                        &extra) != 3 ||
-            classes.lane < 0 || classes.reg < 0 || classes.warp < 0) {
-            return false;
-        }
-        phases->push_back(classes);
-    }
-    return !phases->empty();
 }
 
 std::string join_ints(const std::vector<int>& values, char separator) {
@@ -70,68 +44,6 @@ std::string join_ints(const std::vector<int>& values, char separator) {
 std::string csv_safe(std::string value) {
     std::replace(value.begin(), value.end(), ',', ';');
     return value;
-}
-
-bool build_class_plan_maps(int qubits,
-                           int tile_bits,
-                           int register_bits,
-                           const std::string& family,
-                           const std::vector<TargetClasses>& phases,
-                           std::vector<int>* selected,
-                           std::vector<int>* target_masks) {
-    const int warp_bits = tile_bits - kLaneBits - register_bits;
-    const bool fixed = family == "fixed" || family == "pairs";
-    const bool pairs = family == "pairs";
-    if (family != "compact" && !fixed) return false;
-    if (pairs && warp_bits < 1) return false;
-
-    int target_total = 0;
-    for (const auto& phase : phases) {
-        target_total += phase.lane + phase.reg + phase.warp;
-    }
-    if (target_total != qubits) return false;
-    if (fixed && phases.front().lane + phases.front().reg +
-                     phases.front().warp < kLaneBits + (pairs ? 1 : 0)) {
-        // Later phases reserve these physical low bits.  They must already
-        // have been consumed as rotation targets by the first phase.
-        return false;
-    }
-
-    selected->assign(phases.size() * tile_bits, -1);
-    target_masks->assign(phases.size(), 0);
-    int target = 0;
-    for (size_t phase_index = 0; phase_index < phases.size(); ++phase_index) {
-        const auto& phase = phases[phase_index];
-        const bool reserve_low = fixed && phase_index > 0;
-        const bool reserve_pair = pairs && phase_index > 0;
-        if (phase.lane > kLaneBits || phase.reg > register_bits ||
-            phase.warp > warp_bits || (reserve_low && phase.lane != 0) ||
-            (reserve_pair && phase.warp > warp_bits - 1)) {
-            return false;
-        }
-        const int base = static_cast<int>(phase_index) * tile_bits;
-        if (reserve_low) {
-            for (int lane = 0; lane < kLaneBits; ++lane) {
-                (*selected)[base + lane] = lane;
-            }
-        }
-        const int first_warp_slot = kLaneBits + register_bits;
-        if (reserve_pair) {
-            (*selected)[base + first_warp_slot] = kLaneBits;
-        }
-
-        auto add_targets = [&](int first_slot, int count) {
-            for (int offset = 0; offset < count; ++offset) {
-                const int slot = first_slot + offset;
-                (*selected)[base + slot] = target++;
-                (*target_masks)[phase_index] |= 1 << slot;
-            }
-        };
-        add_targets(0, phase.lane);
-        add_targets(kLaneBits, phase.reg);
-        add_targets(first_warp_slot + (reserve_pair ? 1 : 0), phase.warp);
-    }
-    return true;
 }
 
 }  // namespace
@@ -184,7 +96,8 @@ int main(int argc, char** argv) {
     if (argc < 5 || argc > 7) {
         std::fprintf(stderr,
                      "usage: %s QUBITS rx|ry low|high|range:FIRST|fixed|"
-                     "fixed:FIRST|sequence:N,N,...|compact-sequence:N,N,...|"
+                     "fixed:FIRST|pairs:FIRST|sequence:N,N,...|"
+                     "compact-sequence:N,N,...|"
                      "fixed-sequence:N,N,...|full|full-fixed|full-pairs|"
                      "plan:compact|fixed|pairs:L5R2W1-L0R2W0... "
                      "forward|backward [all|none|lane|register|warp|COUNT] "
@@ -205,6 +118,8 @@ int main(int argc, char** argv) {
                                                        : kRegisterBits;
     const bool fixed_layout =
         layout == "fixed" || layout.rfind("fixed:", 0) == 0;
+    const bool pair_layout =
+        layout == "pairs" || layout.rfind("pairs:", 0) == 0;
     if (gate != "rx" && gate != "ry") return 2;
 
     std::vector<int> selected;
@@ -225,15 +140,15 @@ int main(int argc, char** argv) {
         const size_t family_end = layout.find(':', 5);
         if (family_end == std::string::npos) return 2;
         const std::string family = layout.substr(5, family_end - 5);
-        std::vector<TargetClasses> phases;
-        if (!parse_class_plan(layout.substr(family_end + 1), &phases) ||
-            !build_class_plan_maps(qubits,
-                                   tile_bits,
-                                   register_bits,
-                                   family,
-                                   phases,
-                                   &selected,
-                                   &target_masks)) {
+        std::vector<PhaseTargetClasses> phases;
+        if (!parse_phase_class_plan(layout.substr(family_end + 1), &phases) ||
+            !build_class_phase_maps(qubits,
+                                    tile_bits,
+                                    register_bits,
+                                    family,
+                                    phases,
+                                    &selected,
+                                    &target_masks)) {
             return 2;
         }
     } else if (layout.rfind("sequence:", 0) == 0 ||
@@ -290,23 +205,31 @@ int main(int argc, char** argv) {
             selected[slot] = first + slot;
             target_masks[0] |= 1 << slot;
         }
-    } else if (fixed_layout) {
+    } else if (fixed_layout || pair_layout) {
         selected.assign(tile_bits, -1);
         target_masks.assign(1, 0);
         for (int slot = 0; slot < kLaneBits; ++slot) selected[slot] = slot;
-        const int high_count = tile_bits - kLaneBits;
+        const int first_warp_slot = kLaneBits + register_bits;
+        if (pair_layout) {
+            if (first_warp_slot >= tile_bits || qubits < kLaneBits + 1) return 2;
+            selected[first_warp_slot] = kLaneBits;
+        }
+        const int high_count = tile_bits - kLaneBits - int(pair_layout);
         int first = qubits - high_count;
-        if (layout.rfind("fixed:", 0) == 0) {
+        const size_t prefix = pair_layout ? std::string("pairs:").size()
+                                          : std::string("fixed:").size();
+        if (layout.find(':') != std::string::npos) {
             try {
-                first = std::stoi(layout.substr(6));
+                first = std::stoi(layout.substr(prefix));
             } catch (...) {
                 return 2;
             }
         }
         const int count = std::min(high_count, qubits - first);
-        if (first < kLaneBits || count <= 0) return 2;
+        if (first < kLaneBits + int(pair_layout) || count <= 0) return 2;
         for (int offset = 0; offset < count; ++offset) {
-            const int slot = kLaneBits + offset;
+            int slot = kLaneBits + offset;
+            if (pair_layout && slot >= first_warp_slot) ++slot;
             selected[slot] = first + offset;
             target_masks[0] |= 1 << slot;
         }
@@ -346,7 +269,7 @@ int main(int argc, char** argv) {
             first_slot = kLaneBits + register_bits;
             count = tile_bits - first_slot;
         } else if (target_spec.rfind("L", 0) == 0) {
-            TargetClasses classes;
+            PhaseTargetClasses classes;
             char extra = 0;
             if (std::sscanf(target_spec.c_str(), "L%dR%dW%d%c",
                             &classes.lane,
@@ -357,7 +280,10 @@ int main(int argc, char** argv) {
                 classes.reg < 0 || classes.reg > register_bits ||
                 classes.warp < 0 ||
                 classes.warp > tile_bits - kLaneBits - register_bits ||
-                (fixed_layout && classes.lane != 0)) {
+                ((fixed_layout || pair_layout) && classes.lane != 0) ||
+                (pair_layout &&
+                 classes.warp >
+                     tile_bits - kLaneBits - register_bits - 1)) {
                 return 2;
             }
             target_masks[0] = 0;
@@ -378,7 +304,7 @@ int main(int argc, char** argv) {
             } catch (...) {
                 return 2;
             }
-            first_slot = fixed_layout ? kLaneBits : 0;
+            first_slot = fixed_layout || pair_layout ? kLaneBits : 0;
         }
         if (count < -1 || first_slot < 0 || first_slot + count > tile_bits) {
             return 2;

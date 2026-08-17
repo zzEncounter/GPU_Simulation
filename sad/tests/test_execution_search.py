@@ -17,8 +17,13 @@ from search_execution_strategies import (  # noqa: E402
     minimum_phase_count,
     phase_options,
     all_variants,
+    production_variants,
     _measure,
+    _position_jobs,
     _refine_schedule_jobs,
+    _select_scenario_survivors,
+    _shape_jobs,
+    position_starts,
 )
 
 
@@ -41,6 +46,14 @@ def test_full_shape_space_reaches_every_legal_mailbox_divisor():
     }
     assert chunks_by_register_bits[2] == {1, 2, 4}
     assert chunks_by_register_bits[6] == {2, 4, 8, 16, 32, 64}
+
+
+def test_production_shape_screen_covers_small_tiles_without_mailbox_cross_product():
+    variants = production_variants()
+    assert {variant.tile_bits for variant in variants} == {7, 8, 9, 10, 11}
+    assert all(variant.mailbox_chunks == 1 for variant in variants)
+    assert Variant(32, 2) in variants
+    assert Variant(128, 2) in variants
 
 
 @pytest.mark.parametrize(
@@ -162,3 +175,52 @@ def test_schedule_refinement_keeps_top_and_relative_frontier(tmp_path):
         relative_limit=1.05,
     )
     assert refined == tuple(jobs[:2])
+
+
+def test_scenario_survivors_ignore_variants_outside_current_sparse_run(tmp_path):
+    path = tmp_path / "raw.csv"
+    path.write_text(
+        "stage,variant,gate,direction,qubits,family,candidate,average_ms\n"
+        "shape,t32r2m1,rx,forward,12,compact,full,1.0\n"
+        "shape,t128r4m1,rx,forward,12,compact,full,0.5\n",
+        encoding="utf-8",
+    )
+    selected = _select_scenario_survivors(
+        path, (Variant(32, 2),), count=1
+    )
+    assert selected == {("rx", "forward", 12): (Variant(32, 2),)}
+
+
+def test_small_qubit_jobs_prune_impossible_continuity_families():
+    jobs = tuple(_shape_jobs((Variant(64, 2),), (4, 5, 6)))
+    families_by_qubits = {
+        qubits: {job[4] for job in jobs if job[1] == qubits}
+        for qubits in (4, 5, 6)
+    }
+    assert families_by_qubits == {
+        4: {"compact"},
+        5: {"compact", "fixed"},
+        6: {"compact", "fixed", "pairs"},
+    }
+
+
+def test_position_starts_follow_phase_stride_and_include_highest_window():
+    assert position_starts(24, 10, 0) == (0, 10, 14)
+    assert position_starts(24, 5, 5) == (5, 10, 15, 19)
+    assert position_starts(24, 4, 6) == (6, 10, 14, 18, 20)
+
+
+def test_position_jobs_separate_direction_position_and_continuity():
+    survivors = {
+        ("rx", "forward", 24): (Variant(64, 4),),
+        ("ry", "backward", 24): (Variant(32, 2),),
+    }
+    jobs = tuple(_position_jobs(survivors))
+    rx = [job for job in jobs if job[2:4] == ("rx", "forward")]
+    ry = [job for job in jobs if job[2:4] == ("ry", "backward")]
+    assert {job[4] for job in rx} == {"compact", "fixed", "pairs"}
+    assert {job[4] for job in ry} == {"compact", "fixed"}
+    assert all(job[6] is None for job in jobs)
+    assert any(job[5] == "range:14" for job in rx)
+    assert any(job[5] == "fixed:19" for job in rx)
+    assert any(job[5] == "pairs:20" for job in rx)

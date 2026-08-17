@@ -11,7 +11,10 @@ from pennylane_lightning_baseline import energy_and_grad, native_energy_and_grad
         ("su2-hea", 16),
         ("rzz-hea", 24),
         ("qaoa", 4),
+        ("qaoa-ns", 16),
         ("xxz-hva", 24),
+        ("mera", 8),
+        ("eqnn", 6),
     ],
 )
 @pytest.mark.parametrize("precision", ["float32", "float64"])

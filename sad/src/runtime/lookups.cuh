@@ -5,7 +5,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace sad {
@@ -22,6 +26,137 @@ struct InitialStateLookupData {
 };
 
 constexpr size_t kNoParameterOffset = std::numeric_limits<size_t>::max();
+
+struct PhaseTargetClasses {
+    int lane = 0;
+    int reg = 0;
+    int warp = 0;
+};
+
+inline bool parse_phase_class_plan(
+    const std::string& value,
+    std::vector<PhaseTargetClasses>* phases) {
+    std::stringstream stream(value);
+    std::string phase;
+    while (std::getline(stream, phase, '-')) {
+        PhaseTargetClasses classes;
+        char extra = 0;
+        if (std::sscanf(phase.c_str(),
+                        "L%dR%dW%d%c",
+                        &classes.lane,
+                        &classes.reg,
+                        &classes.warp,
+                        &extra) != 3 ||
+            classes.lane < 0 || classes.reg < 0 || classes.warp < 0) {
+            return false;
+        }
+        phases->push_back(classes);
+    }
+    return !phases->empty();
+}
+
+inline bool build_class_phase_maps(
+    int qubits,
+    int tile_bits,
+    int register_bits,
+    const std::string& family,
+    const std::vector<PhaseTargetClasses>& phases,
+    std::vector<int>* selected_maps,
+    std::vector<int>* target_masks) {
+    const int warp_bits = tile_bits - kLaneBits - register_bits;
+    const bool fixed = family == "fixed" || family == "pairs";
+    const bool pairs = family == "pairs";
+    if (family != "compact" && !fixed) return false;
+    if (pairs && warp_bits < 1) return false;
+
+    int target_total = 0;
+    for (const auto& phase : phases) {
+        target_total += phase.lane + phase.reg + phase.warp;
+    }
+    if (target_total != qubits) return false;
+    if (fixed && phases.front().lane + phases.front().reg +
+                         phases.front().warp <
+                     kLaneBits + (pairs ? 1 : 0)) {
+        return false;
+    }
+
+    selected_maps->assign(phases.size() * tile_bits, -1);
+    target_masks->assign(phases.size(), 0);
+    int target = 0;
+    for (size_t phase_index = 0; phase_index < phases.size(); ++phase_index) {
+        const auto& phase = phases[phase_index];
+        const bool reserve_low = fixed && phase_index > 0;
+        const bool reserve_pair = pairs && phase_index > 0;
+        if (phase.lane > kLaneBits || phase.reg > register_bits ||
+            phase.warp > warp_bits || (reserve_low && phase.lane != 0) ||
+            (reserve_pair && phase.warp > warp_bits - 1)) {
+            return false;
+        }
+        const int base = static_cast<int>(phase_index) * tile_bits;
+        if (reserve_low) {
+            for (int lane = 0; lane < kLaneBits; ++lane) {
+                (*selected_maps)[base + lane] = lane;
+            }
+        }
+        const int first_warp_slot = kLaneBits + register_bits;
+        if (reserve_pair) {
+            (*selected_maps)[base + first_warp_slot] = kLaneBits;
+        }
+
+        const auto add_targets = [&](int first_slot, int count) {
+            for (int offset = 0; offset < count; ++offset) {
+                const int slot = first_slot + offset;
+                (*selected_maps)[base + slot] = target++;
+                (*target_masks)[phase_index] |= 1 << slot;
+            }
+        };
+        add_targets(0, phase.lane);
+        add_targets(kLaneBits, phase.reg);
+        add_targets(first_warp_slot + (reserve_pair ? 1 : 0), phase.warp);
+
+        for (int qubit = 0; qubit < qubits; ++qubit) {
+            bool used = false;
+            for (int slot = 0; slot < tile_bits; ++slot) {
+                used |= (*selected_maps)[base + slot] == qubit;
+            }
+            if (used) continue;
+            const auto empty = std::find(
+                selected_maps->begin() + base,
+                selected_maps->begin() + base + tile_bits,
+                -1);
+            if (empty == selected_maps->begin() + base + tile_bits) break;
+            *empty = qubit;
+        }
+    }
+    return true;
+}
+
+inline auto build_target_phase_owners(
+    int qubits,
+    int tile_bits,
+    const std::vector<int>& selected_maps,
+    const std::vector<int>& target_masks) -> std::vector<int> {
+    if (selected_maps.size() != target_masks.size() * tile_bits) {
+        throw std::invalid_argument("phase map and mask sizes do not match");
+    }
+    std::vector<int> owners(qubits, -1);
+    for (size_t phase = 0; phase < target_masks.size(); ++phase) {
+        for (int slot = 0; slot < tile_bits; ++slot) {
+            if ((target_masks[phase] & (1 << slot)) == 0) continue;
+            const int qubit = selected_maps[phase * tile_bits + slot];
+            if (qubit < 0 || qubit >= qubits || owners[qubit] != -1) {
+                throw std::invalid_argument(
+                    "phase targets must cover every qubit exactly once");
+            }
+            owners[qubit] = static_cast<int>(phase);
+        }
+    }
+    if (std::find(owners.begin(), owners.end(), -1) != owners.end()) {
+        throw std::invalid_argument(
+            "phase targets must cover every qubit exactly once");
+    }
+    return owners;
+}
 
 template <typename T, NonDiagonalGate Gate>
 auto build_initial_product_lookup(int qubits,
@@ -173,6 +308,25 @@ void append_ring_rzz_compact_lookup_group(const T* parameters,
             {static_cast<T>(std::cos(phase)),
              static_cast<T>(std::sin(phase))});
     }
+}
+
+// Non-shared ring RZZ uses only the two eigenvalue cases for each edge.
+// Keeping this compact layout local to qaoa_ns avoids changing shared-QAOA
+// lookup offsets and reduces per-edge storage from kDiagonalLookupSize values
+// to two values.
+template <typename T>
+void append_nonshared_ring_rzz_lookup_group(const T* parameters,
+                                            size_t parameter_offset,
+                                            DiagonalLookupData<T>* data) {
+    data->offsets_by_parameter[parameter_offset] = data->factors.size();
+    const T angle = parameters[parameter_offset];
+    const T half_angle = static_cast<T>(0.5) * angle;
+    data->factors.push_back(
+        {static_cast<T>(std::cos(-half_angle)),
+         static_cast<T>(std::sin(-half_angle))});
+    data->factors.push_back(
+        {static_cast<T>(std::cos(half_angle)),
+         static_cast<T>(std::sin(half_angle))});
 }
 
 inline void build_phase_maps(int qubits,

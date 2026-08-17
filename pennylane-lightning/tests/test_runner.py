@@ -5,7 +5,7 @@ from pennylane_lightning_baseline import energy_and_grad
 
 @pytest.mark.parametrize(
     ("circuit", "expected_parameters"),
-    [("ra-hea", 8), ("su2-hea", 16), ("rzz-hea", 24)],
+    [("ra-hea", 8), ("su2-hea", 16), ("rzz-hea", 24), ("mera", 8)],
 )
 def test_energy_and_grad_on_cpu_lightning(circuit, expected_parameters):
     result = energy_and_grad(

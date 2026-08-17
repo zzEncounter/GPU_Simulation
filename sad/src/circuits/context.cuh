@@ -44,6 +44,7 @@ struct BackwardCircuitContext {
     double* gradients;
     const int* selected_maps;
     const int* target_masks;
+    const int* target_phases;
     int phase_count;
     const int* xxz_even_selected_maps;
     const int* xxz_even_pair_counts;

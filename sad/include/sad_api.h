@@ -14,6 +14,10 @@ enum SadCircuit {
     SAD_CIRCUIT_RZZ_HEA = 2,
     SAD_CIRCUIT_QAOA = 3,
     SAD_CIRCUIT_XXZ_HVA = 4,
+    SAD_CIRCUIT_MERA = 5,
+    SAD_CIRCUIT_EQUIVARIANT_QNN = 6,
+    SAD_CIRCUIT_DATA_REUPLOADING = 7,
+    SAD_CIRCUIT_QAOA_NS = 8,
 };
 
 enum SadPrecision {
@@ -49,6 +53,8 @@ int sad_energy_and_grad(
     int device,
     const void* params,
     size_t parameter_count,
+    const char* forward_phase_plan,
+    const char* backward_phase_plan,
     double* out_energy,
     void* out_grad,
     double* out_forward_times_s,

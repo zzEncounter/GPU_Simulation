@@ -13,6 +13,13 @@
 #ifndef SAD_QAOA_FUSE_COST_RX
 #define SAD_QAOA_FUSE_COST_RX -1
 #endif
+#ifndef SAD_QAOA_INITIAL_STRATEGY
+// -1 auto, 0 combine |+> initialization with cost, 1 split, 2 fuse cost+RX.
+#define SAD_QAOA_INITIAL_STRATEGY -1
+#endif
+
+static_assert(SAD_QAOA_INITIAL_STRATEGY >= -1 &&
+              SAD_QAOA_INITIAL_STRATEGY <= 2);
 
 namespace sad {
 
@@ -118,7 +125,7 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
 
     static void forward_initial(const ForwardCircuitContext<T>& context) {
         const auto layout = QaoaLayerLayout::at(0);
-        if (context.qubits < 26) {
+        const auto combined = [&]() {
             initialise_plus_cost_state_kernel<T>
                 <<<context.ordinary_grid, kOrdinaryBlockThreads>>>(
                     context.phi->current,
@@ -126,21 +133,34 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
                     context.qubits,
                     context.diagonal_lookup_at(layout.gamma));
             SAD_CUDA_CHECK(cudaGetLastError());
-        } else {
-            // At the largest sizes the combined initializer's longer live range
-            // lowers occupancy.  Seed |+> separately, then use a split cost pass
-            // at 26q or fold cost into the first RX phase at 28q.
+            apply_mixer(layout, context, 0);
+        };
+        const auto split = [&]() {
             initialise_plus_state_kernel<T>
                 <<<context.ordinary_grid, kOrdinaryBlockThreads>>>(
                     context.phi->current, context.state_size);
             SAD_CUDA_CHECK(cudaGetLastError());
-            if (context.qubits >= 28) {
-                forward_layer_optimized(0, context);
-                return;
-            }
             apply_cost(layout, context);
-        }
-        apply_mixer(layout, context, 0);
+            apply_mixer(layout, context, 0);
+        };
+        const auto fused = [&]() {
+            initialise_plus_state_kernel<T>
+                <<<context.ordinary_grid, kOrdinaryBlockThreads>>>(
+                    context.phi->current, context.state_size);
+            SAD_CUDA_CHECK(cudaGetLastError());
+            forward_layer_optimized(0, context);
+        };
+#if SAD_QAOA_INITIAL_STRATEGY == 0
+        combined();
+#elif SAD_QAOA_INITIAL_STRATEGY == 1
+        split();
+#elif SAD_QAOA_INITIAL_STRATEGY == 2
+        fused();
+#else
+        // The three variants are within 1% end to end at 20q--28q.  Keep the
+        // combined initializer at every size to avoid an unsupported boundary.
+        combined();
+#endif
     }
 
     static void forward_layer_optimized(
@@ -151,12 +171,8 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
         apply_mixer(layout, context, layer);
         return;
 #elif SAD_QAOA_FUSE_COST_RX < 0
-        const bool use_fused_cost = context.qubits >= 22;
-        if (!use_fused_cost) {
-            apply_cost(layout, context);
-            apply_mixer(layout, context, layer);
-            return;
-        }
+        // The fused path is never more than 2% slower and wins decisively at
+        // several small shapes as well as at the largest sizes.
 #endif
         launch_fused_non_diagonal_forward<
             T,
@@ -221,10 +237,6 @@ struct CircuitExecutor<SAD_CIRCUIT_QAOA, T> {
     static void backward_layer_optimized(
         int layer, const BackwardCircuitContext<T>& context) {
         if constexpr (kQaoaCompactLookup && kQaoaFusedBackward) {
-            if (kQaoaFusedBackwardMode == 1 && context.qubits < 20) {
-                backward_layer(layer, context);
-                return;
-            }
             const auto layout = QaoaLayerLayout::at(layer);
             launch_qaoa_mixer_cost_backward(
                 context.phi->current,

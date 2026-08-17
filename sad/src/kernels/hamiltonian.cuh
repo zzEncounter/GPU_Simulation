@@ -72,6 +72,68 @@ __global__ void qaoa_cost_hamiltonian_kernel(const Complex<T>* phi,
     block_atomic_sum(local_energy, reduction, energy);
 }
 
+template <typename T>
+__global__ void mera_hamiltonian_kernel(const Complex<T>* phi,
+                                        Complex<T>* lambda,
+                                        uint64_t state_size,
+                                        int target,
+                                        double* energy) {
+    __shared__ double reduction[kOrdinaryBlockThreads];
+    double local_energy = 0.0;
+    for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
+         index < state_size;
+         index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+        const T eigenvalue = ((index >> target) & 1ull)
+                                 ? static_cast<T>(-1)
+                                 : static_cast<T>(1);
+        const Complex<T> h_amplitude = scale(phi[index], eigenvalue);
+        lambda[index] = h_amplitude;
+        local_energy += real_conjugate_product(phi[index], h_amplitude);
+    }
+    block_atomic_sum(local_energy, reduction, energy);
+}
+
+template <typename T>
+__global__ void equivariant_qnn_hamiltonian_kernel(const Complex<T>* phi,
+                                                   Complex<T>* lambda,
+                                                   uint64_t state_size,
+                                                   int qubits,
+                                                   double* energy) {
+    __shared__ double reduction[kOrdinaryBlockThreads];
+    double local_energy = 0.0;
+    for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
+         index < state_size;
+         index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+        Complex<T> value = make_complex<T>(0, 0);
+        for (int wire = 0; wire < qubits; ++wire)
+            value = add(value, phi[index ^ (1ull << wire)]);
+        value = scale(value, static_cast<T>(1) / static_cast<T>(qubits));
+        lambda[index] = value;
+        local_energy += real_conjugate_product(phi[index], value);
+    }
+    block_atomic_sum(local_energy, reduction, energy);
+}
+
+template <typename T>
+__global__ void data_reuploading_hamiltonian_kernel(const Complex<T>* phi,
+                                                    Complex<T>* lambda,
+                                                    uint64_t state_size,
+                                                    double* energy) {
+    __shared__ double reduction[kOrdinaryBlockThreads];
+    double local_energy = 0.0;
+    for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
+         index < state_size;
+         index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+        const T eigenvalue = ((index & 1ull) != 0)
+                                 ? static_cast<T>(-1)
+                                 : static_cast<T>(1);
+        const Complex<T> h_amplitude = scale(phi[index], eigenvalue);
+        lambda[index] = h_amplitude;
+        local_energy += real_conjugate_product(phi[index], h_amplitude);
+    }
+    block_atomic_sum(local_energy, reduction, energy);
+}
+
 // Periodic antiferromagnetic XXZ target used by XXZ-HVA.
 // H = sum_i (X_i X_(i+1) + Y_i Y_(i+1) + Delta Z_i Z_(i+1)), Delta=1/2.
 template <typename T>
