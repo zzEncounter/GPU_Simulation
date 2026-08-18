@@ -1,0 +1,654 @@
+{
+  "circuit": "equivariant-qnn",
+  "csv": "/home/rzzhang/sad_merged/benchmark/results/equivariant_qnn_parameter_search.csv",
+  "json": "/home/rzzhang/sad_merged/benchmark/results/equivariant_qnn_parameter_search.json",
+  "layers": 8,
+  "steps": 10,
+  "warmup_steps": 3,
+  "updated_utc": "2026-08-17T17:17:03.819877+00:00",
+  "completed_rows": 456,
+  "failed_rows": 13,
+  "fastest": {
+    "median_ms": 0.21806350000000002,
+    "candidate_key": "reduction:4:4c30b10d3c87672b",
+    "stage": "reduction",
+    "circuit": "equivariant-qnn",
+    "qubits": 4,
+    "config": {
+      "backward_register_bits": 2,
+      "backward_threads": 32,
+      "diagonal_threads": 64,
+      "diagonal_warp_atomic": 0,
+      "forward_register_bits": 2,
+      "forward_threads": 32,
+      "legacy_reduction": 0,
+      "lookup_bits": 8,
+      "mailbox_chunks": 1,
+      "ordinary_threads": 64,
+      "rotation_warp_atomic": 1,
+      "shared_diagonal_threads": 128
+    }
+  },
+  "slowest": {
+    "median_ms": 4667.5173955,
+    "candidate_key": "forward_shape:28:964cd09670460116",
+    "stage": "forward_shape",
+    "circuit": "equivariant-qnn",
+    "qubits": 28,
+    "config": {
+      "backward_register_bits": 2,
+      "backward_threads": 128,
+      "diagonal_threads": 64,
+      "diagonal_warp_atomic": 0,
+      "forward_register_bits": 4,
+      "forward_threads": 256,
+      "legacy_reduction": 1,
+      "lookup_bits": 8,
+      "mailbox_chunks": 1,
+      "ordinary_threads": 128,
+      "rotation_warp_atomic": 0,
+      "shared_diagonal_threads": 128
+    }
+  },
+  "average_median_ms": 411.1844705230263,
+  "by_qubits": {
+    "4": {
+      "completed_rows": 32,
+      "fastest": {
+        "median_ms": 0.21806350000000002,
+        "candidate_key": "reduction:4:4c30b10d3c87672b",
+        "stage": "reduction",
+        "circuit": "equivariant-qnn",
+        "qubits": 4,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.611491,
+        "candidate_key": "backward_shape:4:f87587c1ebfb9473",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 4,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.3296873125
+    },
+    "6": {
+      "completed_rows": 32,
+      "fastest": {
+        "median_ms": 0.262651,
+        "candidate_key": "reduction:6:daf41452e4f67830",
+        "stage": "reduction",
+        "circuit": "equivariant-qnn",
+        "qubits": 6,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 2,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.81011,
+        "candidate_key": "backward_shape:6:99ccb7c1091e1742",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 6,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.420399546875
+    },
+    "8": {
+      "completed_rows": 32,
+      "fastest": {
+        "median_ms": 0.33308299999999996,
+        "candidate_key": "reduction:8:255202c2e45e28e6",
+        "stage": "reduction",
+        "circuit": "equivariant-qnn",
+        "qubits": 8,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 2,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.949132,
+        "candidate_key": "backward_shape:8:f0864bd734674e7d",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 8,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.5262101875
+    },
+    "10": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 0.47617099999999996,
+        "candidate_key": "reduction:10:241a92df91e3a8bc",
+        "stage": "reduction",
+        "circuit": "equivariant-qnn",
+        "qubits": 10,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1.2453165,
+        "candidate_key": "backward_shape:10:bf7f27bb46a9a5ae",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 10,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.6924565
+    },
+    "12": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 0.5401405,
+        "candidate_key": "reduction:12:f90f70e5e7b81321",
+        "stage": "reduction",
+        "circuit": "equivariant-qnn",
+        "qubits": 12,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 2,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1.579202,
+        "candidate_key": "backward_shape:12:6d8bd21d56c88390",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 12,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.8400984444444445
+    },
+    "14": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 0.5921605,
+        "candidate_key": "backward_shape:14:ef2a353af8272811",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 14,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1.8306749999999998,
+        "candidate_key": "backward_shape:14:ad82e41f53d307a7",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 14,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.947066
+    },
+    "16": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 1.0653454999999998,
+        "candidate_key": "backward_shape:16:86e3d98bb78998bf",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 16,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 2.253758,
+        "candidate_key": "backward_shape:16:371f00a285870a71",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 16,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 1.3279349722222222
+    },
+    "18": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 2.9736214999999997,
+        "candidate_key": "backward_shape:18:97fa6c41136e5245",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 18,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 3.8513185,
+        "candidate_key": "forward_shape:18:cc2bf64bfd05ed09",
+        "stage": "forward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 18,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 256,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 3.2064739861111113
+    },
+    "20": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 10.880229,
+        "candidate_key": "forward_phase:20:41eb001a16bd3eb2",
+        "stage": "forward_phase",
+        "circuit": "equivariant-qnn",
+        "qubits": 20,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 13.950617,
+        "candidate_key": "backward_shape:20:7c527fc471559b84",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 20,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 11.678655666666666
+    },
+    "22": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 42.886100500000005,
+        "candidate_key": "forward_phase:22:76befb10c17b2285",
+        "stage": "forward_phase",
+        "circuit": "equivariant-qnn",
+        "qubits": 22,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 53.517699,
+        "candidate_key": "backward_shape:22:6f0b215d34f27138",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 22,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 45.805981361111115
+    },
+    "24": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 188.9318925,
+        "candidate_key": "ordinary_threads:24:c23010263bce021c",
+        "stage": "ordinary_threads",
+        "circuit": "equivariant-qnn",
+        "qubits": 24,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 2,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 244.3537015,
+        "candidate_key": "backward_shape:24:f46361369f568772",
+        "stage": "backward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 24,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 205.54935018055554
+    },
+    "26": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 788.9362319999999,
+        "candidate_key": "forward_phase:26:39e3665d92d1ace7",
+        "stage": "forward_phase",
+        "circuit": "equivariant-qnn",
+        "qubits": 26,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1022.658727,
+        "candidate_key": "forward_shape:26:651f6a18f8c269b7",
+        "stage": "forward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 26,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 256,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 880.1730802916667
+    },
+    "28": {
+      "completed_rows": 36,
+      "fastest": {
+        "median_ms": 3597.893666,
+        "candidate_key": "reduction:28:a8d32fc9fa083778",
+        "stage": "reduction",
+        "circuit": "equivariant-qnn",
+        "qubits": 28,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 128,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 2,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 4667.5173955,
+        "candidate_key": "forward_shape:28:964cd09670460116",
+        "stage": "forward_shape",
+        "circuit": "equivariant-qnn",
+        "qubits": 28,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 256,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 4056.9810429583335
+    }
+  }
+}

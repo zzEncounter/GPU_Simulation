@@ -1,0 +1,654 @@
+{
+  "circuit": "mera",
+  "csv": "/home/rzzhang/sad_merged/benchmark/results/mera_parameter_search.csv",
+  "json": "/home/rzzhang/sad_merged/benchmark/results/mera_parameter_search.json",
+  "layers": 1,
+  "steps": 10,
+  "warmup_steps": 3,
+  "updated_utc": "2026-08-17T15:47:20.096108+00:00",
+  "completed_rows": 364,
+  "failed_rows": 19,
+  "fastest": {
+    "median_ms": 0.069158,
+    "candidate_key": "reduction:4:251ed2dd0266ac09",
+    "stage": "reduction",
+    "circuit": "mera",
+    "qubits": 4,
+    "config": {
+      "backward_register_bits": 2,
+      "backward_threads": 32,
+      "diagonal_threads": 64,
+      "diagonal_warp_atomic": 0,
+      "forward_register_bits": 2,
+      "forward_threads": 32,
+      "legacy_reduction": 1,
+      "lookup_bits": 8,
+      "mailbox_chunks": 1,
+      "ordinary_threads": 64,
+      "rotation_warp_atomic": 0,
+      "shared_diagonal_threads": 128
+    }
+  },
+  "slowest": {
+    "median_ms": 1310.221495,
+    "candidate_key": "backward_shape:28:1bc65094f7e5f069",
+    "stage": "backward_shape",
+    "circuit": "mera",
+    "qubits": 28,
+    "config": {
+      "backward_register_bits": 2,
+      "backward_threads": 64,
+      "diagonal_threads": 64,
+      "diagonal_warp_atomic": 0,
+      "forward_register_bits": 4,
+      "forward_threads": 128,
+      "legacy_reduction": 1,
+      "lookup_bits": 8,
+      "mailbox_chunks": 1,
+      "ordinary_threads": 128,
+      "rotation_warp_atomic": 0,
+      "shared_diagonal_threads": 128
+    }
+  },
+  "average_median_ms": 110.13396948214286,
+  "by_qubits": {
+    "4": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.069158,
+        "candidate_key": "reduction:4:251ed2dd0266ac09",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 4,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.1309175,
+        "candidate_key": "backward_shape:4:f87587c1ebfb9473",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 4,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.08982028571428571
+    },
+    "6": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.1034165,
+        "candidate_key": "reduction:6:901433acac5ab3db",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 6,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.2119575,
+        "candidate_key": "backward_shape:6:99ccb7c1091e1742",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 6,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.13660332142857143
+    },
+    "8": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.112469,
+        "candidate_key": "reduction:8:e5d15b61df59cc1d",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 8,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.26720849999999996,
+        "candidate_key": "backward_shape:8:3688081c4a0a547d",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 8,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.16399048214285714
+    },
+    "10": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.1564025,
+        "candidate_key": "reduction:10:68443d463d1d9ca4",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 10,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.38503950000000003,
+        "candidate_key": "backward_shape:10:16beea4fbb9b152c",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 10,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.23175062500000002
+    },
+    "12": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.156287,
+        "candidate_key": "reduction:12:6d7a5bb01345c3a7",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 12,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.45153499999999996,
+        "candidate_key": "backward_shape:12:6d8bd21d56c88390",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 12,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.25940271428571426
+    },
+    "14": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.17826,
+        "candidate_key": "reduction:14:b204e76d1e61be94",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 14,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.5307755,
+        "candidate_key": "backward_shape:14:ad82e41f53d307a7",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 14,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.29114142857142855
+    },
+    "16": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.2640435,
+        "candidate_key": "ordinary_threads:16:f6ded9e1b0049f26",
+        "stage": "ordinary_threads",
+        "circuit": "mera",
+        "qubits": 16,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.6011124999999999,
+        "candidate_key": "backward_shape:16:64110c2b6a3e9371",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 16,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.34665026785714287
+    },
+    "18": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 0.7255664999999999,
+        "candidate_key": "backward_shape:18:a270924c9907f080",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 18,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1.0157065,
+        "candidate_key": "forward_shape:18:cc2bf64bfd05ed09",
+        "stage": "forward_shape",
+        "circuit": "mera",
+        "qubits": 18,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 256,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.80552575
+    },
+    "20": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 2.419141,
+        "candidate_key": "forward_shape:20:8348c5688d68645f",
+        "stage": "forward_shape",
+        "circuit": "mera",
+        "qubits": 20,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 3.3653550000000005,
+        "candidate_key": "backward_shape:20:d33ed1bb72020eb8",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 20,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 2.6727061428571433
+    },
+    "22": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 10.423937500000001,
+        "candidate_key": "reduction:22:e8bda7da77296f09",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 22,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 13.1851605,
+        "candidate_key": "backward_shape:22:044f155337f7daf9",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 22,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 11.132979178571428
+    },
+    "24": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 50.23233749999999,
+        "candidate_key": "reduction:24:fb4a300223f7d80c",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 24,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 256,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 60.375209999999996,
+        "candidate_key": "backward_shape:24:9fef3a8637d478e3",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 24,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 256,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 256,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 53.21154921428571
+    },
+    "26": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 231.1471805,
+        "candidate_key": "reduction:26:1a804fb99a21bd21",
+        "stage": "reduction",
+        "circuit": "mera",
+        "qubits": 26,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 256,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 275.1991815,
+        "candidate_key": "backward_shape:26:135eb7c24c0ff1ac",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 26,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 256,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 248.9516475535714
+    },
+    "28": {
+      "completed_rows": 28,
+      "fastest": {
+        "median_ms": 1012.0026264999999,
+        "candidate_key": "ordinary_threads:28:7105f15eb1d2f22b",
+        "stage": "ordinary_threads",
+        "circuit": "mera",
+        "qubits": 28,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1310.221495,
+        "candidate_key": "backward_shape:28:1bc65094f7e5f069",
+        "stage": "backward_shape",
+        "circuit": "mera",
+        "qubits": 28,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 1113.4478363035714
+    }
+  }
+}
