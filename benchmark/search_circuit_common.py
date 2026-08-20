@@ -111,6 +111,7 @@ def flags_for(
     legacy_reduction: int = 1,
     rotation_warp_atomic: int = 0,
     diagonal_warp_atomic: int = 0,
+    qaoa_bd_fusion: int = 1,
 ) -> dict[str, int]:
     return {
         "SAD_FORWARD_BLOCK_THREADS": forward_threads,
@@ -125,6 +126,9 @@ def flags_for(
         "SAD_LEGACY_BLOCK_REDUCTION": legacy_reduction,
         "SAD_ROTATION_WARP_ATOMIC": rotation_warp_atomic,
         "SAD_DIAGONAL_WARP_ATOMIC": diagonal_warp_atomic,
+        # Keep this explicit in every search library.  Non-BD circuits ignore
+        # the macro, while qaoa-bd can switch between fused and split paths.
+        "SAD_QAOA_BD_FUSION": qaoa_bd_fusion,
     }
 
 
@@ -141,8 +145,18 @@ def make_candidate(
         "backward_register_bits", "ordinary_threads", "diagonal_threads",
         "shared_diagonal_threads", "lookup_bits", "mailbox_chunks",
         "legacy_reduction", "rotation_warp_atomic", "diagonal_warp_atomic",
+        "qaoa_bd_fusion",
     }
-    flags = flags_for(**{name: config[name] for name in flag_names})
+    defaults = {
+        "diagonal_threads": 64, "shared_diagonal_threads": 128,
+        "lookup_bits": 8, "mailbox_chunks": 1, "legacy_reduction": 1,
+        "rotation_warp_atomic": 0, "diagonal_warp_atomic": 0,
+        "qaoa_bd_fusion": 1,
+    }
+    flags = flags_for(**{
+        name: config[name] if name in config else defaults[name]
+        for name in flag_names
+    })
     identity = json.dumps(
         {
             "stage": stage, "qubits": qubits, "config": config,

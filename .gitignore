@@ -47,4 +47,5 @@ benchmark/results/*.csv
 !benchmark/results/research_main.csv
 !benchmark/results/native_baseline_comparison.csv
 sad/build/
+cuQuantum/build/
 .env

@@ -18,6 +18,7 @@ enum SadCircuit {
     SAD_CIRCUIT_EQUIVARIANT_QNN = 6,
     SAD_CIRCUIT_DATA_REUPLOADING = 7,
     SAD_CIRCUIT_QAOA_NS = 8,
+    SAD_CIRCUIT_QAOA_BD = 9,
 };
 
 enum SadPrecision {

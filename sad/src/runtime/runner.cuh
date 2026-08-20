@@ -56,7 +56,8 @@ void run_step(PreparedWorkspace<T>* workspace,
                     config.qubits,
                     workspace->energy.get());
         } else if (config.circuit == SAD_CIRCUIT_QAOA ||
-                   config.circuit == SAD_CIRCUIT_QAOA_NS) {
+                   config.circuit == SAD_CIRCUIT_QAOA_NS ||
+                   config.circuit == SAD_CIRCUIT_QAOA_BD) {
             qaoa_cost_hamiltonian_kernel<T>
                 <<<workspace->ordinary_grid, kOrdinaryBlockThreads>>>(
                     phi.current,

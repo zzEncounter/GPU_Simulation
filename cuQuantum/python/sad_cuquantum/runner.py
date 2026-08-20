@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Iterable
 
 supported_circuits = (
-    "ra-hea", "su2-hea", "rzz-hea", "qaoa", "qaoa-ns", "xxz-hva",
+    "ra-hea", "su2-hea", "rzz-hea", "qaoa", "qaoa-bd", "qaoa-ns", "qaoa-ns-bd", "xxz-hva", "xxz-hva-bd",
     "mera", "equivariant-qnn", "data-reuploading",
 )
 
@@ -33,7 +33,8 @@ class _NativeGate(ctypes.Structure):
 _NATIVE_GATE_KIND = {"rx": 0, "ry": 1, "rz": 2, "rzz": 3, "cnot": 4}
 _NATIVE_CIRCUIT = {
     "ra-hea": 0, "su2-hea": 1, "rzz-hea": 2, "qaoa": 3,
-    "xxz-hva": 4, "mera": 5, "equivariant-qnn": 6,
+    "qaoa-bd": 9, "qaoa-ns-bd": 10,
+    "xxz-hva": 4, "xxz-hva-bd": 11, "mera": 5, "equivariant-qnn": 6,
     "data-reuploading": 7, "qaoa-ns": 8,
 }
 
@@ -68,9 +69,9 @@ def _norm(name: str) -> str:
 
 def expected_parameter_count(circuit: str, qubits: int, layers: int) -> int:
     name = _norm(circuit)
-    if name == "qaoa":
+    if name in ("qaoa", "qaoa-bd"):
         return 2 * layers
-    if name == "qaoa-ns":
+    if name in ("qaoa-ns", "qaoa-ns-bd"):
         return 2 * qubits * layers
     if name == "mera":
         if layers != (qubits - 1).bit_length():
@@ -79,7 +80,7 @@ def expected_parameter_count(circuit: str, qubits: int, layers: int) -> int:
     if name == "equivariant-qnn":
         return 3 * layers
     return {"ra-hea": 1, "su2-hea": 2, "rzz-hea": 3,
-            "xxz-hva": 3, "data-reuploading": 3}[name] * qubits * layers
+            "xxz-hva": 3, "xxz-hva-bd": 3, "data-reuploading": 3}[name] * qubits * layers
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,13 @@ def _add_cnot(gates: list[Gate], control: int, target: int) -> None:
         (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 0, 1), (0, 0, 1, 0))))
 
 
+def _add_h(gates: list[Gate], wire: int) -> None:
+    """H up to global phase using supported one-qubit rotations."""
+    _add(gates, "rz", wire, None, math.pi / 2)
+    _add(gates, "rx", wire, None, math.pi / 2)
+    _add(gates, "rz", wire, None, math.pi / 2)
+
+
 def _product_initial(gates: list[Gate], kind: str, params: list[float],
                      offset: int, qubits: int, rz_offset: int | None = None):
     for wire in range(qubits):
@@ -189,15 +197,32 @@ def build_gates(circuit: str, qubits: int, layers: int,
                 idx = base + 2 * qubits + edge
                 _add_rzz(gates, edge, (edge + 1) % qubits, idx, params[idx])
         return gates
-    if name in ("qaoa", "qaoa-ns"):
+    if name in ("qaoa", "qaoa-bd", "qaoa-ns", "qaoa-ns-bd"):
         for wire in range(qubits):
             # H = RY(pi/2) followed by RZ(0), represented as a fixed matrix.
             _add(gates, "ry", wire, None, math.pi / 2)
         for layer in range(layers):
-            if name == "qaoa":
+            if name in ("qaoa", "qaoa-bd"):
                 beta, gamma = 2 * layer, 2 * layer + 1
-                for edge in range(qubits): _add_rzz(gates, edge, (edge + 1) % qubits, gamma, params[gamma])
+                for edge in range(qubits):
+                    right = (edge + 1) % qubits
+                    if name == "qaoa-bd":
+                        _add_cnot(gates, edge, right)
+                        _add(gates, "rz", right, gamma, params[gamma])
+                        _add_cnot(gates, edge, right)
+                    else:
+                        _add_rzz(gates, edge, right, gamma, params[gamma])
                 for wire in range(qubits): _add(gates, "rx", wire, beta, params[beta])
+            elif name == "qaoa-ns-bd":
+                base = 2 * layer * qubits
+                for edge in range(qubits):
+                    right = (edge + 1) % qubits
+                    idx = base + qubits + edge
+                    _add_cnot(gates, edge, right)
+                    _add(gates, "rz", right, idx, params[idx])
+                    _add_cnot(gates, edge, right)
+                for wire in range(qubits):
+                    _add(gates, "rx", wire, base + wire, params[base + wire])
             else:
                 base = 2 * layer * qubits
                 # Match SAD qaoa-ns layout: beta block then gamma block.
@@ -216,7 +241,7 @@ def build_gates(circuit: str, qubits: int, layers: int,
                 left = 2 * edge + (layer & 1); _add_cnot(gates, left, (left + 1) % qubits)
             for wire in range(qubits): _add(gates, "rz", wire, base + 2 * qubits + wire, params[base + 2 * qubits + wire])
         return gates
-    if name == "xxz-hva":
+    if name in ("xxz-hva", "xxz-hva-bd"):
         for wire in range(0, qubits, 2):
             _add(gates, "ry", wire, None, math.pi)
         for layer in range(layers):
@@ -224,9 +249,26 @@ def build_gates(circuit: str, qubits: int, layers: int,
             for parity in (0, 1):
                 for edge in range(parity, qubits, 2):
                     right = (edge + 1) % qubits
-                    _add_rzz(gates, edge, right, base + 2 * qubits + edge, params[base + 2 * qubits + edge])
-                    _add(gates, "rx", edge, base + edge, params[base + edge])
-                    _add(gates, "rx", right, base + right, params[base + right])
+                    if name == "xxz-hva-bd":
+                        for wire in (edge, right): _add_h(gates, wire)
+                        _add_cnot(gates, edge, right)
+                        _add(gates, "rz", right, base + edge, params[base + edge])
+                        _add_cnot(gates, edge, right)
+                        for wire in (edge, right): _add_h(gates, wire)
+                        _add(gates, "rx", edge, None, math.pi / 2)
+                        _add(gates, "rx", right, None, math.pi / 2)
+                        _add_cnot(gates, edge, right)
+                        _add(gates, "rz", right, base + qubits + edge, params[base + qubits + edge])
+                        _add_cnot(gates, edge, right)
+                        _add(gates, "rx", edge, None, -math.pi / 2)
+                        _add(gates, "rx", right, None, -math.pi / 2)
+                        _add_cnot(gates, edge, right)
+                        _add(gates, "rz", right, base + 2 * qubits + edge, params[base + 2 * qubits + edge])
+                        _add_cnot(gates, edge, right)
+                    else:
+                        _add_rzz(gates, edge, right, base + 2 * qubits + edge, params[base + 2 * qubits + edge])
+                        _add(gates, "rx", edge, base + edge, params[base + edge])
+                        _add(gates, "rx", right, base + right, params[base + right])
         return gates
     if name == "mera":
         active = list(range(qubits)); cursor = 0
@@ -276,7 +318,7 @@ def _apply(state: list[complex], gate: Gate, qubits: int, inverse: bool = False)
 def _hamiltonian(name: str, state: list[complex], qubits: int) -> list[complex]:
     out = [0j] * len(state); name = _norm(name)
     for i, amp in enumerate(state):
-        if name in ("qaoa", "qaoa-ns"):
+        if name in ("qaoa", "qaoa-bd", "qaoa-ns", "qaoa-ns-bd"):
             zz = sum(1 if ((i >> q) & 1) == ((i >> ((q + 1) % qubits)) & 1) else -1 for q in range(qubits))
             out[i] = 0.5 * (zz - qubits) * amp
         elif name == "mera":
@@ -284,7 +326,7 @@ def _hamiltonian(name: str, state: list[complex], qubits: int) -> list[complex]:
             out[i] = (1 if not (i & (1 << target)) else -1) * amp
         elif name == "data-reuploading": out[i] = (1 if not (i & 1) else -1) * amp
         elif name == "equivariant-qnn": out[i] = sum(state[i ^ (1 << q)] for q in range(qubits)) / qubits
-        elif name == "xxz-hva":
+        elif name in ("xxz-hva", "xxz-hva-bd"):
             zz = 0
             for q in range(qubits):
                 right = (q + 1) % qubits

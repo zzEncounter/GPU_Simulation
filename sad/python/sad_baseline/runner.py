@@ -220,6 +220,7 @@ _CIRCUITS = {
     "rzz-hea": (2, 3),
     "rzz": (2, 3),
     "qaoa": (3, 2),
+    "qaoa-bd": (9, 0),
     "qaoa-ns": (8, 0),
     "xxz-hva": (4, 3),
     "xxz": (4, 3),
@@ -505,9 +506,9 @@ def energy_and_grad(
         circuit_id, parameters_per_qubit_layer = _CIRCUITS[circuit_key]
     except KeyError as exc:
         raise ValueError(f"unsupported circuit {circuit!r}") from exc
-    if circuit_id in (2, 3, 4, 7, 8) and qubits % 2:
+    if circuit_id in (2, 3, 4, 7, 8, 9) and qubits % 2:
         raise ValueError(f"{circuit_key} requires an even number of qubits")
-    if circuit_id in (3, 4, 7, 8) and qubits < 4:
+    if circuit_id in (3, 4, 7, 8, 9) and qubits < 4:
         raise ValueError(f"{circuit_key} requires at least four qubits")
     if circuit_id == 5 and layers != (qubits - 1).bit_length():
         raise ValueError("MERA layers must equal ceil(log2(qubits))")
@@ -519,7 +520,7 @@ def energy_and_grad(
     except KeyError as exc:
         raise ValueError(f"unsupported precision {precision!r}") from exc
 
-    if circuit_id == 3:
+    if circuit_id in (3, 9):
         parameter_count = 2 * layers
     elif circuit_id == 8:
         parameter_count = 2 * qubits * layers
@@ -629,6 +630,7 @@ def energy_and_grad(
         "equivariant-qnn",
         "data-reuploading",
         "qaoa-ns",
+        "qaoa-bd",
     )[circuit_id]
     return EnergyGradResult(
         energy=native_energy.value,

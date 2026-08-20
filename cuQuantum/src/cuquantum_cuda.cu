@@ -149,7 +149,7 @@ __global__ void hamiltonian_kernel(const Complex* state, Complex* lambda,
     for (uint64_t index = blockIdx.x * blockDim.x + threadIdx.x;
          index < count; index += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
         Complex h = make_complex(0, 0);
-        if (circuit == 3 || circuit == 8) {
+        if (circuit == 3 || circuit == 8 || circuit == 9 || circuit == 10) {
             int zz = 0;
             for (int q = 0; q < qubits; ++q)
                 zz += (((index >> q) & 1) ==
@@ -163,7 +163,7 @@ __global__ void hamiltonian_kernel(const Complex* state, Complex* lambda,
             for (int q = 0; q < qubits; ++q)
                 h = cuCadd(h, cuCmul(state[index ^ (1ull << q)],
                                      make_complex(1.0 / qubits, 0)));
-        } else if (circuit == 4) {
+        } else if (circuit == 4 || circuit == 11) {
             int zz = 0;
             for (int q = 0; q < qubits; ++q) {
                 const int next = (q + 1) % qubits;

@@ -15,6 +15,7 @@
 #include "../circuits/su2_hea.cuh"
 #include "../circuits/qaoa.cuh"
 #include "../circuits/qaoa_ns.cuh"
+#include "../circuits/qaoa_bd.cuh"
 #include "../circuits/xxz_hva.cuh"
 #include "../circuits/mera.cuh"
 #include "../circuits/equivariant_qnn.cuh"
@@ -74,6 +75,9 @@ inline size_t expected_parameter_count(int qubits, int layers) {
     }
     if constexpr (Circuit == SAD_CIRCUIT_QAOA_NS) {
         return static_cast<size_t>(2) * qubits * layers;
+    }
+    if constexpr (Circuit == SAD_CIRCUIT_QAOA_BD) {
+        return static_cast<size_t>(2) * layers;
     }
     if constexpr (Circuit == SAD_CIRCUIT_MERA) {
         int expected_layers = 0;

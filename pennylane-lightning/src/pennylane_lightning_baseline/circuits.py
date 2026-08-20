@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -164,6 +165,27 @@ def _qaoa(params: object, qubits: int, layers: int) -> None:
             qml.RX(beta, wires=wire)
 
 
+def _qaoa_bd(params: object, qubits: int, layers: int) -> None:
+    """QAOA with every cost RZZ explicitly decomposed into CNOT-RZ-CNOT."""
+    for wire in range(qubits):
+        qml.Hadamard(wires=wire)
+    for layer in range(layers):
+        beta = params[2 * layer]
+        gamma = params[2 * layer + 1]
+        for left in range(0, qubits, 2):
+            right = (left + 1) % qubits
+            qml.CNOT(wires=(left, right))
+            qml.RZ(gamma, wires=right)
+            qml.CNOT(wires=(left, right))
+        for left in range(1, qubits, 2):
+            right = (left + 1) % qubits
+            qml.CNOT(wires=(left, right))
+            qml.RZ(gamma, wires=right)
+            qml.CNOT(wires=(left, right))
+        for wire in range(qubits):
+            qml.RX(beta, wires=wire)
+
+
 def _qaoa_ns(params: object, qubits: int, layers: int) -> None:
     for wire in range(qubits):
         qml.Hadamard(wires=wire)
@@ -174,6 +196,22 @@ def _qaoa_ns(params: object, qubits: int, layers: int) -> None:
                 params[base + qubits + edge],
                 wires=(edge, (edge + 1) % qubits),
             )
+        for wire in range(qubits):
+            qml.RX(params[base + wire], wires=wire)
+
+
+def _qaoa_ns_bd(params: object, qubits: int, layers: int) -> None:
+    """Non-shared-angle QAOA with every RZZ decomposed into basic gates."""
+    for wire in range(qubits):
+        qml.Hadamard(wires=wire)
+    for layer in range(layers):
+        base = 2 * layer * qubits
+        for edge in range(qubits):
+            right = (edge + 1) % qubits
+            gamma = params[base + qubits + edge]
+            qml.CNOT(wires=(edge, right))
+            qml.RZ(gamma, wires=right)
+            qml.CNOT(wires=(edge, right))
         for wire in range(qubits):
             qml.RX(params[base + wire], wires=wire)
 
@@ -192,6 +230,37 @@ def _xxz_hva(params: object, qubits: int, layers: int) -> None:
                 qml.IsingXX(params[x_offset + left], wires=wires)
                 qml.IsingYY(params[y_offset + left], wires=wires)
                 qml.IsingZZ(params[z_offset + left], wires=wires)
+
+
+def _xxz_hva_bd(params: object, qubits: int, layers: int) -> None:
+    """XXZ-HVA with RXX/RYY/RZZ expanded into one-qubit gates and CNOTs."""
+    for wire in range(1, qubits, 2):
+        qml.PauliX(wires=wire)
+    for layer in range(layers):
+        base = layer * 3 * qubits
+        for parity in (0, 1):
+            for left in range(parity, qubits, 2):
+                right = (left + 1) % qubits
+                # RXX = H H RZZ H H.
+                qml.Hadamard(wires=left)
+                qml.Hadamard(wires=right)
+                qml.CNOT(wires=(left, right))
+                qml.RZ(params[base + left], wires=right)
+                qml.CNOT(wires=(left, right))
+                qml.Hadamard(wires=left)
+                qml.Hadamard(wires=right)
+                # RYY = RX(pi/2) RX(pi/2) RZZ RX(-pi/2) RX(-pi/2).
+                qml.RX(math.pi / 2, wires=left)
+                qml.RX(math.pi / 2, wires=right)
+                qml.CNOT(wires=(left, right))
+                qml.RZ(params[base + qubits + left], wires=right)
+                qml.CNOT(wires=(left, right))
+                qml.RX(-math.pi / 2, wires=left)
+                qml.RX(-math.pi / 2, wires=right)
+                # RZZ.
+                qml.CNOT(wires=(left, right))
+                qml.RZ(params[base + 2 * qubits + left], wires=right)
+                qml.CNOT(wires=(left, right))
 
 
 def _mera(params: object, qubits: int, layers: int) -> None:
@@ -267,7 +336,7 @@ def build_hamiltonian(
     observables: list[qml.operation.Operator] = []
     if circuit_spec.name == "mera":
         return qml.Hamiltonian([1.0], [qml.PauliZ(qubits - 1)])
-    if circuit_spec.name in {"qaoa", "qaoa-ns"}:
+    if circuit_spec.name in {"qaoa", "qaoa-bd", "qaoa-ns", "qaoa-ns-bd"}:
         for wire in range(qubits):
             coefficients.extend((0.5, -0.5))
             observables.extend(
@@ -277,7 +346,7 @@ def build_hamiltonian(
                 )
             )
         return qml.Hamiltonian(coefficients, observables)
-    if circuit_spec.name == "xxz-hva":
+    if circuit_spec.name in {"xxz-hva", "xxz-hva-bd"}:
         for wire in range(qubits):
             next_wire = (wire + 1) % qubits
             coefficients.extend((1.0, 1.0, 0.5))
@@ -315,6 +384,26 @@ register_circuit(
 )
 register_circuit(
     CircuitSpec(
+        name="xxz-hva-bd",
+        aliases=("xxz_hva_bd",),
+        parameter_count_fn=lambda qubits, layers: 3 * qubits * layers,
+        builder=_xxz_hva_bd,
+        requires_even_qubits=True,
+        minimum_qubits=4,
+    )
+)
+register_circuit(
+    CircuitSpec(
+        name="qaoa-ns-bd",
+        aliases=("qaoa_ns_bd",),
+        parameter_count_fn=lambda qubits, layers: 2 * qubits * layers,
+        builder=_qaoa_ns_bd,
+        requires_even_qubits=True,
+        minimum_qubits=4,
+    )
+)
+register_circuit(
+    CircuitSpec(
         name="xxz-hva",
         aliases=("xxz",),
         parameter_count_fn=lambda qubits, layers: 3 * qubits * layers,
@@ -328,6 +417,16 @@ register_circuit(
         name="qaoa",
         parameter_count_fn=lambda qubits, layers: 2 * layers,
         builder=_qaoa,
+        requires_even_qubits=True,
+        minimum_qubits=4,
+    )
+)
+register_circuit(
+    CircuitSpec(
+        name="qaoa-bd",
+        aliases=("qaoa_bd",),
+        parameter_count_fn=lambda qubits, layers: 2 * layers,
+        builder=_qaoa_bd,
         requires_even_qubits=True,
         minimum_qubits=4,
     )

@@ -232,52 +232,61 @@ def _build_operations(
                 cursor += 1
         return tuple(operations)
 
-    if name == "qaoa":
+    if name in {"qaoa", "qaoa-bd"}:
         for wire in range(qubits):
             operations.append(NativeOperation("Hadamard", (wire,)))
         for layer in range(layers):
             beta = 2 * layer
             gamma = beta + 1
-            for left in range(0, qubits, 2):
-                _append_parameterized(
-                    operations,
-                    "IsingZZ",
-                    (left, (left + 1) % qubits),
-                    params,
-                    gamma,
-                )
-            for left in range(1, qubits, 2):
-                _append_parameterized(
-                    operations,
-                    "IsingZZ",
-                    (left, (left + 1) % qubits),
-                    params,
-                    gamma,
-                )
+            for parity in (0, 1):
+                for left in range(parity, qubits, 2):
+                    right = (left + 1) % qubits
+                    if name == "qaoa-bd":
+                        operations.append(NativeOperation("CNOT", (left, right)))
+                        _append_parameterized(
+                            operations, "RZ", (right,), params, gamma
+                        )
+                        operations.append(NativeOperation("CNOT", (left, right)))
+                    else:
+                        _append_parameterized(
+                            operations,
+                            "IsingZZ",
+                            (left, right),
+                            params,
+                            gamma,
+                        )
             for wire in range(qubits):
                 _append_parameterized(operations, "RX", (wire,), params, beta)
         return tuple(operations)
 
-    if name == "qaoa-ns":
+    if name in {"qaoa-ns", "qaoa-ns-bd"}:
         for wire in range(qubits):
             operations.append(NativeOperation("Hadamard", (wire,)))
         for layer in range(layers):
             base = 2 * layer * qubits
             for edge in range(qubits):
-                _append_parameterized(
-                    operations,
-                    "IsingZZ",
-                    (edge, (edge + 1) % qubits),
-                    params,
-                    base + qubits + edge,
-                )
+                right = (edge + 1) % qubits
+                if name == "qaoa-ns-bd":
+                    operations.append(NativeOperation("CNOT", (edge, right)))
+                    _append_parameterized(
+                        operations, "RZ", (right,), params, base + qubits + edge
+                    )
+                    operations.append(NativeOperation("CNOT", (edge, right)))
+                else:
+                    _append_parameterized(
+                        operations,
+                        "IsingZZ",
+                        (edge, right),
+                        params,
+                        base + qubits + edge,
+                    )
             for wire in range(qubits):
                 _append_parameterized(
                     operations, "RX", (wire,), params, base + wire
                 )
         return tuple(operations)
 
-    if name == "xxz-hva":
+    if name in {"xxz-hva", "xxz-hva-bd"}:
         for wire in range(1, qubits, 2):
             operations.append(NativeOperation("PauliX", (wire,)))
         for layer in range(layers):
@@ -285,19 +294,28 @@ def _build_operations(
             for parity in (0, 1):
                 for left in range(parity, qubits, 2):
                     wires = (left, (left + 1) % qubits)
-                    _append_parameterized(
-                        operations, "IsingXX", wires, params, base + left
-                    )
-                    _append_parameterized(
-                        operations, "IsingYY", wires, params, base + qubits + left
-                    )
-                    _append_parameterized(
-                        operations,
-                        "IsingZZ",
-                        wires,
-                        params,
-                        base + 2 * qubits + left,
-                    )
+                    if name == "xxz-hva-bd":
+                        for wire in wires:
+                            operations.append(NativeOperation("Hadamard", (wire,)))
+                        operations.append(NativeOperation("CNOT", wires))
+                        _append_parameterized(operations, "RZ", (wires[1],), params, base + left)
+                        operations.append(NativeOperation("CNOT", wires))
+                        for wire in wires:
+                            operations.append(NativeOperation("Hadamard", (wire,)))
+                        operations.append(NativeOperation("RX", (wires[0],), (math.pi / 2,)))
+                        operations.append(NativeOperation("RX", (wires[1],), (math.pi / 2,)))
+                        operations.append(NativeOperation("CNOT", wires))
+                        _append_parameterized(operations, "RZ", (wires[1],), params, base + qubits + left)
+                        operations.append(NativeOperation("CNOT", wires))
+                        operations.append(NativeOperation("RX", (wires[0],), (-math.pi / 2,)))
+                        operations.append(NativeOperation("RX", (wires[1],), (-math.pi / 2,)))
+                        operations.append(NativeOperation("CNOT", wires))
+                        _append_parameterized(operations, "RZ", (wires[1],), params, base + 2 * qubits + left)
+                        operations.append(NativeOperation("CNOT", wires))
+                    else:
+                        _append_parameterized(operations, "IsingXX", wires, params, base + left)
+                        _append_parameterized(operations, "IsingYY", wires, params, base + qubits + left)
+                        _append_parameterized(operations, "IsingZZ", wires, params, base + 2 * qubits + left)
         return tuple(operations)
 
     if name == "mera":
@@ -393,7 +411,7 @@ def _build_hamiltonian(
     elif circuit.name == "data-reuploading":
         coefficients = [1.0]
         terms = [named("PauliZ", [0])]
-    elif circuit.name in {"qaoa", "qaoa-ns"}:
+    elif circuit.name in {"qaoa", "qaoa-bd", "qaoa-ns", "qaoa-ns-bd"}:
         for wire in range(qubits):
             coefficients.extend((0.5, -0.5))
             terms.extend(
@@ -402,7 +420,7 @@ def _build_hamiltonian(
                     named("Identity", [wire]),
                 )
             )
-    elif circuit.name == "xxz-hva":
+    elif circuit.name in {"xxz-hva", "xxz-hva-bd"}:
         for wire in range(qubits):
             next_wire = (wire + 1) % qubits
             coefficients.extend((1.0, 1.0, 0.5))
