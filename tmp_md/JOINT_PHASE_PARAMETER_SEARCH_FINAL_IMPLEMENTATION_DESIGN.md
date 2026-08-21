@@ -5,8 +5,8 @@
 本文是最终收敛后的实现设计。脚本只搜索所有目标电路共同适用的三类参数，并对含 RZZ 门的电路增加一个二值策略参数：
 
 ```text
-shape_pair × partition_level × mailbox_chunks
-（含 RZZ 的电路再乘以 rzz_strategy）
+execution_profile × shape_pair × partition_level × mailbox_chunks
+（含 RZZ 的优化 profile 再乘以 rzz_strategy）
 ```
 
 正式搜索电路为：
@@ -29,7 +29,7 @@ mera
 qaoa-bd
 ```
 
-本设计不搜索 ordinary/diagonal threads、lookup bits、reduction、persistent、execution mode 等电路执行策略。它们使用当前生产默认值，并在 CSV 中完整记录，便于复现。对于包含 RZZ 门的电路，`rzz_strategy` 是唯一保留的电路策略参数，取 `merged` 或 `split`。XXZ 使用历史 `microbench_xxz.cu` 路径执行 pair-count phase，不走 SAD Python E2E ABI。
+本设计不搜索 ordinary/diagonal threads、lookup bits、reduction、persistent 等执行参数。搜索保留两个执行 profile：`optimized` 使用当前 SAD 优化路径，`legacy-generic` 使用 legacy/非 real-amplitude 路径作为粗粒度 baseline，以覆盖从粗到精的运行时间范围。对于包含 RZZ 门的优化 profile，`rzz_strategy` 取 `merged` 或 `split`。XXZ 使用历史 `microbench_xxz.cu` 路径执行 pair-count phase，不走 SAD Python E2E ABI。
 
 ## 2. 输出布局
 
@@ -99,13 +99,13 @@ SHAPE_PAIRS = (
 
 最后两个 pair 是显式异构方向候选。后续扩展 shape grid 时也必须使用 `forward_shapes × backward_shapes` 的有序笛卡尔积，并分别执行 forward/backward 的 `valid_shape()` 和资源检查。
 
-不含 RZZ 策略时，每个 `(circuit, qubits)` 的理论候选数为：
+不含 RZZ 策略时，每个 `(circuit, qubits)` 的优化 profile 理论候选数为：
 
 ```text
 5 shape pairs × 5 phase levels × 2 mailbox values = 50
 ```
 
-对于含 RZZ 门的电路，再交叉 `rzz_strategy ∈ {merged, split}`，理论候选数为 100。实际候选数可能因电路 qubit 约束、shape 合法性和资源预检出现失败状态，但失败候选必须保留。
+每个非 XXZ 电路另外增加 5 个 `legacy-generic` baseline（每个 shape 一个，不重复 phase/mailbox，因为 legacy 不消费 phase map）；因此非 RZZ 电路为 55，含 RZZ 电路为 105。XXZ 保持 50 个 microbenchmark 候选。实际候选数可能因电路 qubit 约束、shape 合法性和资源预检出现失败状态，但失败候选必须保留。
 
 ## 4. Phase 语义
 
@@ -267,6 +267,7 @@ class Candidate:
     backward_plan: PhasePlan
     mailbox_chunks: int
     rzz_strategy: str
+    execution_profile: str
     fixed_execution_flags: tuple[tuple[str, int], ...]
     fixed_structure_policy: str
     steps: int
@@ -453,7 +454,23 @@ JSON 至少包含：
 - `arithmetic_mean`：所有有效候选 median 的算术平均；
 - `median`：所有有效候选 median 的中位数。
 
-JSON 还应按 `(qubits, partition_level)` 提供局部统计，便于程序中断时查看已完成分布。
+JSON 还应按 `qubits` 提供局部统计。每个 qubit 项至少包含：
+
+```json
+{
+  "completed_ok": 50,
+  "runtime_ms": {
+    "best": 0.0,
+    "worst": 0.0,
+    "arithmetic_mean": 0.0,
+    "median": 0.0
+  },
+  "best_candidate": {},
+  "worst_candidate": {}
+}
+```
+
+如需绘制 phase 曲线，再按 `(qubits, partition_level)` 从 CSV 派生统计；JSON 的强制汇总粒度是每个 qubit。
 
 如果当前没有有效候选，四个时间字段写 `null`，不能写 0 伪造结果。
 

@@ -56,6 +56,7 @@ class Candidate:
     backward_plan: PhasePlan
     mailbox_chunks: int
     rzz_strategy: str
+    execution_profile: str
     steps: int
     warmup_steps: int
 

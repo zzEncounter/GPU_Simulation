@@ -22,7 +22,7 @@ from typing import Any, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "sad" / "python"))
 from joint_phase_search_common import (  # noqa: E402
-    CIRCUITS, MAILBOX_CHUNKS, PHASE_LEVELS, RZZ_CIRCUITS, Candidate,
+    CIRCUITS, MAILBOX_CHUNKS, PHASE_LEVELS, RZZ_CIRCUITS, Candidate, PhasePlan,
     ShapePair, build_rotation_plan, build_xxz_plan, normalize_circuit,
     repetitions_for_qubits, valid_shape,
 )
@@ -40,11 +40,48 @@ FIELDS = (
     "mailbox_chunks", "partition_level", "phase_family_forward",
     "phase_family_backward", "phase_count_forward", "phase_count_backward",
     "forward_phase_plan", "backward_phase_plan", "forward_pair_counts",
-    "backward_pair_counts", "rzz_strategy", "steps", "warmup_steps",
+    "backward_pair_counts", "rzz_strategy", "execution_profile", "steps", "warmup_steps",
     "repetitions", "median_ms", "mean_ms", "min_ms", "max_ms", "std_ms",
     "forward_ms", "hamiltonian_ms", "backward_ms", "energy_abs_error",
     "gradient_max_abs_error", "kernel_variant", "library_path",
 )
+
+
+def read_result_rows(csv_path: Path) -> list[dict[str, str]]:
+    """Read both pre-execution-profile and current CSV schemas safely."""
+    if not csv_path.exists():
+        return []
+    rows: list[dict[str, str]] = []
+    with csv_path.open(newline="", encoding="utf-8") as stream:
+        reader = csv.reader(stream)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return rows
+        current_header = list(header)
+        if "execution_profile" not in current_header:
+            steps_index = current_header.index("steps")
+            extended_header = (
+                current_header[:steps_index]
+                + ["execution_profile"]
+                + current_header[steps_index:]
+            )
+        else:
+            extended_header = current_header
+        for values in reader:
+            if not values:
+                continue
+            if len(values) == len(current_header):
+                row = dict(zip(current_header, values))
+                row.setdefault("execution_profile", "optimized")
+            elif len(values) == len(extended_header):
+                row = dict(zip(extended_header, values))
+            else:
+                # Preserve visibility of malformed rows without allowing them
+                # to contaminate performance aggregates.
+                continue
+            rows.append(row)
+    return rows
 
 
 def parse_ints(value: str) -> tuple[int, ...]:
@@ -73,8 +110,16 @@ def candidates(circuit: str, qubits: Iterable[int]) -> list[Candidate]:
                     for strategy in strategies:
                         result.append(Candidate(
                             circuit, q, shape, level, fp, bp, mailbox, strategy,
-                            repetitions_for_qubits(q), 3,
+                            "optimized", repetitions_for_qubits(q), 3,
                         ))
+        if circuit != "xxz-hva":
+            for shape in SHAPE_PAIRS:
+                fp = PhasePlan("legacy", 0.0, 0, q, "", ())
+                bp = PhasePlan("legacy", 0.0, 0, q, "", ())
+                result.append(Candidate(
+                    circuit, q, shape, 0.0, fp, bp, 1, "not_applicable",
+                    "legacy-generic", repetitions_for_qubits(q), 3,
+                ))
     return result
 
 
@@ -96,7 +141,8 @@ def _base_row(candidate: Candidate, run_id: str) -> dict[str, Any]:
         "backward_phase_plan": candidate.backward_plan.encoded,
         "forward_pair_counts": "+".join(map(str, candidate.forward_plan.counts)) if candidate.forward_plan.family == "xxz-matching" else "",
         "backward_pair_counts": "+".join(map(str, candidate.backward_plan.counts)) if candidate.backward_plan.family == "xxz-matching" else "",
-        "rzz_strategy": candidate.rzz_strategy, "steps": candidate.steps,
+        "rzz_strategy": candidate.rzz_strategy,
+        "execution_profile": candidate.execution_profile, "steps": candidate.steps,
         "warmup_steps": candidate.warmup_steps, "repetitions": candidate.steps,
         "median_ms": "", "mean_ms": "", "min_ms": "", "max_ms": "", "std_ms": "",
         "forward_ms": "", "hamiltonian_ms": "", "backward_ms": "",
@@ -106,10 +152,7 @@ def _base_row(candidate: Candidate, run_id: str) -> dict[str, Any]:
 
 
 def write_summary(csv_path: Path, json_path: Path, circuit: str, expected: int) -> None:
-    rows: list[dict[str, str]] = []
-    if csv_path.exists():
-        with csv_path.open(newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+    rows = read_result_rows(csv_path)
     ok = [r for r in rows if r.get("status") == "ok" and r.get("median_ms")]
     values = [float(r["median_ms"]) for r in ok]
     def selected(fn):
@@ -128,7 +171,24 @@ def write_summary(csv_path: Path, json_path: Path, circuit: str, expected: int) 
             "median": statistics.median(values) if values else None,
         },
         "best_candidate": selected(min), "worst_candidate": selected(max),
+        "by_qubits": {},
     }
+    by_qubits: dict[str, list[dict[str, str]]] = {}
+    for row in ok:
+        by_qubits.setdefault(row["qubits"], []).append(row)
+    for qubits, group in sorted(by_qubits.items(), key=lambda item: int(item[0])):
+        group_values = [float(row["median_ms"]) for row in group]
+        payload["by_qubits"][qubits] = {
+            "completed_ok": len(group),
+            "runtime_ms": {
+                "best": min(group_values),
+                "worst": max(group_values),
+                "arithmetic_mean": statistics.fmean(group_values),
+                "median": statistics.median(group_values),
+            },
+            "best_candidate": min(group, key=lambda row: float(row["median_ms"])),
+            "worst_candidate": max(group, key=lambda row: float(row["median_ms"])),
+        }
     json_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = json_path.with_suffix(json_path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -186,10 +246,11 @@ def run_circuit(circuit: str, qs: tuple[int, ...], out_dir: Path, seed: int,
                 dry_run: bool, retry_failed: bool) -> None:
     jobs = candidates(circuit, qs)
     csv_path, json_path = out_dir / f"{circuit}.csv", out_dir / f"{circuit}.json"
-    done: dict[str, str] = {}
-    if csv_path.exists():
-        with csv_path.open(newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f): done[row["candidate_key"]] = row.get("status", "")
+    done: dict[str, str] = {
+        row["candidate_key"]: row.get("status", "")
+        for row in read_result_rows(csv_path)
+        if row.get("candidate_key")
+    }
     if dry_run:
         print(f"{circuit}: {len(jobs)} candidates ({sum(q in qs for q in qs)} qubit groups)")
         return
@@ -231,11 +292,16 @@ def run_circuit(circuit: str, qs: tuple[int, ...], out_dir: Path, seed: int,
                         backward_register_bits=c.shape.backward_register_bits,
                         mailbox_chunks=c.mailbox_chunks,
                     )
+                    if c.execution_profile == "legacy-generic":
+                        flags["SAD_REAL_AMPLITUDE"] = 0
                     if c.circuit in RZZ_CIRCUITS:
                         flags.update({"SAD_RZZ_FORWARD_FUSED": 1 if c.rzz_strategy == "merged" else 0,
                                       "SAD_RZZ_BACKWARD_STRATEGY": 1 if c.rzz_strategy == "merged" else 0})
                     library = candidate_library(flags)
                     os.environ["SAD_LIBRARY_PATH"] = str(library)
+                    os.environ["SAD_EXECUTION_MODE"] = (
+                        "legacy" if c.execution_profile == "legacy-generic" else "optimized"
+                    )
                     result = energy_and_grad(
                         circuit=c.circuit, random_seed=42, scalability=(c.qubits, 8),
                         precision="float64", steps=c.steps, warmup_steps=3,
