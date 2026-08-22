@@ -33,6 +33,14 @@ SHAPE_PAIRS = (
     ShapePair(128, 2, 128, 2), ShapePair(32, 2, 128, 2),
     ShapePair(128, 2, 32, 2),
 )
+XXZ_E2E_SHAPE_PAIRS = tuple(
+    ShapePair(f_threads, f_register, b_threads, b_register)
+    for f_threads in (32, 64, 128)
+    for f_register in (2, 3, 4)
+    for b_threads in (32, 64, 128)
+    for b_register in (2, 3, 4)
+    if valid_shape(f_threads, f_register) and valid_shape(b_threads, b_register)
+)
 FIELDS = (
     "timestamp_utc", "run_id", "candidate_key", "status", "error", "circuit",
     "qubits", "layers", "precision", "random_seed", "forward_threads",
@@ -91,14 +99,16 @@ def parse_ints(value: str) -> tuple[int, ...]:
     return values
 
 
-def candidates(circuit: str, qubits: Iterable[int]) -> list[Candidate]:
+def candidates(circuit: str, qubits: Iterable[int], *, xxz_e2e: bool = False) -> list[Candidate]:
     circuit = normalize_circuit(circuit)
     result: list[Candidate] = []
     for q in qubits:
-        for shape in SHAPE_PAIRS:
+        shape_pairs = XXZ_E2E_SHAPE_PAIRS if circuit == "xxz-hva" and xxz_e2e else SHAPE_PAIRS
+        levels = (0.0,) if circuit == "xxz-hva" and xxz_e2e else PHASE_LEVELS
+        for shape in shape_pairs:
             f_valid = valid_shape(shape.forward_threads, shape.forward_register_bits)
             b_valid = valid_shape(shape.backward_threads, shape.backward_register_bits)
-            for level in PHASE_LEVELS:
+            for level in levels:
                 if circuit == "xxz-hva":
                     fp = build_xxz_plan(q, shape.forward_threads, shape.forward_register_bits, level)
                     bp = build_xxz_plan(q, shape.backward_threads, shape.backward_register_bits, level)
@@ -110,7 +120,8 @@ def candidates(circuit: str, qubits: Iterable[int]) -> list[Candidate]:
                     for strategy in strategies:
                         result.append(Candidate(
                             circuit, q, shape, level, fp, bp, mailbox, strategy,
-                            "optimized", repetitions_for_qubits(q), 3,
+                            ("xxz-e2e" if xxz_e2e and circuit == "xxz-hva" else "optimized"),
+                            repetitions_for_qubits(q), 3,
                         ))
         if circuit != "xxz-hva":
             for shape in SHAPE_PAIRS:
@@ -243,9 +254,10 @@ def _run_xxz_candidate(candidate: Candidate) -> tuple[float, float, float, Path]
 
 
 def run_circuit(circuit: str, qs: tuple[int, ...], out_dir: Path, seed: int,
-                dry_run: bool, retry_failed: bool) -> None:
-    jobs = candidates(circuit, qs)
-    csv_path, json_path = out_dir / f"{circuit}.csv", out_dir / f"{circuit}.json"
+                dry_run: bool, retry_failed: bool, xxz_e2e: bool = False) -> None:
+    jobs = candidates(circuit, qs, xxz_e2e=xxz_e2e)
+    result_stem = f"{circuit}-e2e" if xxz_e2e and circuit == "xxz-hva" else circuit
+    csv_path, json_path = out_dir / f"{result_stem}.csv", out_dir / f"{result_stem}.json"
     done: dict[str, str] = {
         row["candidate_key"]: row.get("status", "")
         for row in read_result_rows(csv_path)
@@ -277,7 +289,7 @@ def run_circuit(circuit: str, qs: tuple[int, ...], out_dir: Path, seed: int,
             try:
                 if not valid_shape(c.shape.forward_threads, c.shape.forward_register_bits) or not valid_shape(c.shape.backward_threads, c.shape.backward_register_bits):
                     row["status"] = "invalid_shape"
-                elif c.forward_plan.family == "xxz-matching":
+                elif c.forward_plan.family == "xxz-matching" and not xxz_e2e:
                     total, forward, backward, binary = _run_xxz_candidate(c)
                     row.update(status="ok", median_ms=total, mean_ms=total,
                                min_ms=total, max_ms=total, std_ms=0.0,
@@ -292,6 +304,12 @@ def run_circuit(circuit: str, qs: tuple[int, ...], out_dir: Path, seed: int,
                         backward_register_bits=c.shape.backward_register_bits,
                         mailbox_chunks=c.mailbox_chunks,
                     )
+                    # The current cross-matching map builder cannot represent
+                    # every tile shape (for example q24 with forward tile_bits=7).
+                    # Keep E2E XXZ search on the safe separate-matching path
+                    # until the map builder is fixed.
+                    if xxz_e2e and c.circuit == "xxz-hva":
+                        flags["SAD_XXZ_CROSS_MATCHING"] = 0
                     if c.execution_profile == "legacy-generic":
                         flags["SAD_REAL_AMPLITUDE"] = 0
                     if c.circuit in RZZ_CIRCUITS:
@@ -343,11 +361,15 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true", default=True)
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--xxz-e2e", action="store_true",
+        help="run XXZ-HVA candidates through real energy_and_grad; searches shape/register/mailbox only",
+    )
     args = parser.parse_args()
     circuits = tuple(normalize_circuit(c) for c in args.circuits.split(","))
     for circuit in circuits:
         run_circuit(circuit, args.qubits, args.output_dir, args.shuffle_seed,
-                    args.dry_run, args.retry_failed)
+                    args.dry_run, args.retry_failed, args.xxz_e2e)
 
 
 if __name__ == "__main__":
