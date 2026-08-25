@@ -1,0 +1,72 @@
+参数配置
+
+qubits
+SAD 最好配置
+SAD 最差配置
+SAD 平均代表配置
+SAD 中位数代表配置
+4
+candidate=reduction:4:251ed2dd0266ac09; stage=reduction; config={"backward_register_bits":2,"backward_threads":32,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=backward_shape:4:f87587c1ebfb9473; stage=backward_shape; config={"backward_register_bits":4,"backward_threads":128,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=forward_shape:4:d8fea2798abab198; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":32,"mailbox_chunks":1}
+candidate=forward_shape:4:3929c52c272469c1; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":3,"forward_threads":32,"mailbox_chunks":1}
+6
+candidate=reduction:6:901433acac5ab3db; stage=reduction; config={"backward_register_bits":2,"backward_threads":64,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=backward_shape:6:99ccb7c1091e1742; stage=backward_shape; config={"backward_register_bits":4,"backward_threads":128,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=forward_shape:6:a2634ed75d71fa0f; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=forward_shape:6:5ff6578b9bed7de4; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":3,"forward_threads":32,"mailbox_chunks":1}
+8
+candidate=reduction:8:e5d15b61df59cc1d; stage=reduction; config={"backward_register_bits":2,"backward_threads":32,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=backward_shape:8:3688081c4a0a547d; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=forward_shape:8:ce2ceae9bb3e9b26; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":32,"mailbox_chunks":1}
+candidate=backward_shape:8:7ae541ff8750f314; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":64,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+10
+candidate=reduction:10:68443d463d1d9ca4; stage=reduction; config={"backward_register_bits":2,"backward_threads":32,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=backward_shape:10:16beea4fbb9b152c; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=forward_shape:10:8c49fd4b7b757a91; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":32,"mailbox_chunks":1}
+candidate=forward_shape:10:8b54ace12a1d182c; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":3,"forward_threads":64,"mailbox_chunks":1}
+12
+candidate=reduction:12:6d7a5bb01345c3a7; stage=reduction; config={"backward_register_bits":2,"backward_threads":32,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=backward_shape:12:6d8bd21d56c88390; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=forward_shape:12:1d8cbfdec5d649c5; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=forward_shape:12:ef954cf1a126a8be; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":3,"forward_threads":32,"mailbox_chunks":1}
+14
+candidate=reduction:14:b204e76d1e61be94; stage=reduction; config={"backward_register_bits":2,"backward_threads":32,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=backward_shape:14:ad82e41f53d307a7; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=forward_shape:14:04d96b39bfaa3126; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=forward_shape:14:9f5c1c4e40e48ae0; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":3,"forward_threads":32,"mailbox_chunks":1}
+16
+candidate=ordinary_threads:16:f6ded9e1b0049f26; stage=ordinary_threads; config={"backward_register_bits":2,"backward_threads":64,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=backward_shape:16:64110c2b6a3e9371; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=forward_shape:16:883c7a8e39367a5b; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":64,"mailbox_chunks":1}
+candidate=forward_shape:16:07ac2257f9136394; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":3,"forward_threads":64,"mailbox_chunks":1}
+18
+candidate=backward_shape:18:a270924c9907f080; stage=backward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=forward_shape:18:cc2bf64bfd05ed09; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":256,"mailbox_chunks":1}
+candidate=forward_shape:18:f385c4650f56f9dc; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":2,"forward_threads":32,"mailbox_chunks":1}
+candidate=backward_shape:18:f748f88f7330bc89; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":32,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+20
+candidate=forward_shape:20:8348c5688d68645f; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":2,"forward_threads":128,"mailbox_chunks":1}
+candidate=backward_shape:20:d33ed1bb72020eb8; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":128,"mailbox_chunks":1}
+candidate=backward_shape:20:1dc242f6458efdf2; stage=backward_shape; config={"backward_register_bits":2,"backward_threads":32,"forward_register_bits":2,"forward_threads":128,"mailbox_chunks":1}
+candidate=backward_shape:20:9971104cd33931fc; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":32,"forward_register_bits":2,"forward_threads":128,"mailbox_chunks":1}
+22
+candidate=reduction:22:e8bda7da77296f09; stage=reduction; config={"backward_register_bits":2,"backward_threads":64,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=backward_shape:22:044f155337f7daf9; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=ordinary_threads:22:1232f7f05e70d02b; stage=ordinary_threads; config={"backward_register_bits":2,"backward_threads":64,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+candidate=forward_shape:22:beaaa693c0840342; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":64,"mailbox_chunks":1}
+24
+candidate=reduction:24:fb4a300223f7d80c; stage=reduction; config={"backward_register_bits":3,"backward_threads":64,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=backward_shape:24:9fef3a8637d478e3; stage=backward_shape; config={"backward_register_bits":3,"backward_threads":256,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=forward_shape:24:7a85eb6c0db2d24d; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":32,"mailbox_chunks":1}
+candidate=forward_shape:24:f6add30e28d3fbdd; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":2,"forward_threads":64,"mailbox_chunks":1}
+26
+candidate=reduction:26:1a804fb99a21bd21; stage=reduction; config={"backward_register_bits":3,"backward_threads":64,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=backward_shape:26:135eb7c24c0ff1ac; stage=backward_shape; config={"backward_register_bits":2,"backward_threads":32,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=backward_shape:26:578bc26996153d49; stage=backward_shape; config={"backward_register_bits":2,"backward_threads":256,"forward_register_bits":2,"forward_threads":256,"mailbox_chunks":1}
+candidate=forward_shape:26:6ad1c62af126cacf; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":32,"mailbox_chunks":1}
+28
+candidate=ordinary_threads:28:7105f15eb1d2f22b; stage=ordinary_threads; config={"backward_register_bits":4,"backward_threads":32,"forward_register_bits":4,"forward_threads":128,"mailbox_chunks":1}
+candidate=backward_shape:28:1bc65094f7e5f069; stage=backward_shape; config={"backward_register_bits":2,"backward_threads":64,"forward_register_bits":4,"forward_threads":128,"mailbox_chunks":1}
+candidate=forward_shape:28:ee988ea1c682974a; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":3,"forward_threads":128,"mailbox_chunks":1}
+candidate=forward_shape:28:ba80418b3b75cffa; stage=forward_shape; config={"backward_register_bits":2,"backward_threads":128,"forward_register_bits":4,"forward_threads":32,"mailbox_chunks":1}

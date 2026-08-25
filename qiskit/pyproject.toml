@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "qiskit-baseline"
+version = "0.1.0"
+description = "Qiskit AerSimulator parameter-shift-rule gradient baseline"
+requires-python = ">=3.10"
+dependencies = [
+    "qiskit>=1.0",
+    "qiskit-aer-gpu>=0.14",   # GPU-enabled Aer; use qiskit-aer for CPU-only
+    "numpy>=1.24",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

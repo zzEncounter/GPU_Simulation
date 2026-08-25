@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#252525;letter-spacing:0}.tick{font-size:14px;fill:#555}.label{font-size:17px;font-weight:600}.title{font-size:23px;font-weight:700}.subtitle{font-size:14px;fill:#666}.value{font-size:13px;font-weight:600}.legend{font-size:14px}</style>
+<text class="title" x="92" y="32">MERA: SAD Speedup Comparison</text>
+<text class="subtitle" x="92" y="54">Baseline time / SAD time (higher is better)</text>
+<line x1="92" y1="522.0" x2="922" y2="522.0" stroke="#dedede" stroke-width="1"/>
+<text class="tick" x="80" y="527.0" text-anchor="end">0x</text>
+<line x1="92" y1="431.6" x2="922" y2="431.6" stroke="#dedede" stroke-width="1"/>
+<text class="tick" x="80" y="436.6" text-anchor="end">26x</text>
+<line x1="92" y1="341.2" x2="922" y2="341.2" stroke="#dedede" stroke-width="1"/>
+<text class="tick" x="80" y="346.2" text-anchor="end">52x</text>
+<line x1="92" y1="250.8" x2="922" y2="250.8" stroke="#dedede" stroke-width="1"/>
+<text class="tick" x="80" y="255.8" text-anchor="end">78x</text>
+<line x1="92" y1="160.4" x2="922" y2="160.4" stroke="#dedede" stroke-width="1"/>
+<text class="tick" x="80" y="165.4" text-anchor="end">104x</text>
+<line x1="92" y1="70.0" x2="922" y2="70.0" stroke="#dedede" stroke-width="1"/>
+<text class="tick" x="80" y="75.0" text-anchor="end">130x</text>
+<line x1="92.0" y1="522" x2="92.0" y2="528" stroke="#777"/>
+<text class="tick" x="92.0" y="548" text-anchor="middle">4</text>
+<line x1="161.2" y1="522" x2="161.2" y2="528" stroke="#777"/>
+<text class="tick" x="161.2" y="548" text-anchor="middle">6</text>
+<line x1="230.3" y1="522" x2="230.3" y2="528" stroke="#777"/>
+<text class="tick" x="230.3" y="548" text-anchor="middle">8</text>
+<line x1="299.5" y1="522" x2="299.5" y2="528" stroke="#777"/>
+<text class="tick" x="299.5" y="548" text-anchor="middle">10</text>
+<line x1="368.7" y1="522" x2="368.7" y2="528" stroke="#777"/>
+<text class="tick" x="368.7" y="548" text-anchor="middle">12</text>
+<line x1="437.8" y1="522" x2="437.8" y2="528" stroke="#777"/>
+<text class="tick" x="437.8" y="548" text-anchor="middle">14</text>
+<line x1="507.0" y1="522" x2="507.0" y2="528" stroke="#777"/>
+<text class="tick" x="507.0" y="548" text-anchor="middle">16</text>
+<line x1="576.2" y1="522" x2="576.2" y2="528" stroke="#777"/>
+<text class="tick" x="576.2" y="548" text-anchor="middle">18</text>
+<line x1="645.3" y1="522" x2="645.3" y2="528" stroke="#777"/>
+<text class="tick" x="645.3" y="548" text-anchor="middle">20</text>
+<line x1="714.5" y1="522" x2="714.5" y2="528" stroke="#777"/>
+<text class="tick" x="714.5" y="548" text-anchor="middle">22</text>
+<line x1="783.7" y1="522" x2="783.7" y2="528" stroke="#777"/>
+<text class="tick" x="783.7" y="548" text-anchor="middle">24</text>
+<line x1="852.8" y1="522" x2="852.8" y2="528" stroke="#777"/>
+<text class="tick" x="852.8" y="548" text-anchor="middle">26</text>
+<line x1="922.0" y1="522" x2="922.0" y2="528" stroke="#777"/>
+<text class="tick" x="922.0" y="548" text-anchor="middle">28</text>
+<line x1="92" y1="70" x2="92" y2="522" stroke="#777" stroke-width="1.2"/>
+<line x1="92" y1="522" x2="922" y2="522" stroke="#777" stroke-width="1.2"/>
+<polyline points="92.0,332.2 161.2,375.8 230.3,385.3 299.5,413.2 368.7,416.3 437.8,414.9 507.0,413.4 576.2,469.7 645.3,497.9 714.5,499.6 783.7,497.1 852.8,498.1 922.0,499.1" fill="none" stroke="#176B87" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,129.9 161.2,475.5 230.3,481.5 299.5,491.3 368.7,490.6 437.8,478.9 507.0,435.9 576.2,391.6 645.3,369.4 714.5,467.4 783.7,490.4 852.8,497.2 922.0,499.5" fill="none" stroke="#C44A35" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="8 5"/>
+<polyline points="92.0,520.3 161.2,511.1 230.3,510.3 299.5,509.7 368.7,510.3 437.8,513.4 507.0,517.6 576.2,520.6 645.3,521.5 714.5,520.6 783.7,519.3 852.8,518.7 922.0,518.5" fill="none" stroke="#5B7F36" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="3 4"/>
+<circle cx="92.0" cy="332.2" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="92.0" cy="129.9" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="92.0" cy="520.3" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="161.2" cy="375.8" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="161.2" cy="475.5" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="161.2" cy="511.1" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="230.3" cy="385.3" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="230.3" cy="481.5" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="230.3" cy="510.3" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="299.5" cy="413.2" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="299.5" cy="491.3" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="299.5" cy="509.7" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="368.7" cy="416.3" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="368.7" cy="490.6" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="368.7" cy="510.3" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="437.8" cy="414.9" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="437.8" cy="478.9" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="437.8" cy="513.4" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="507.0" cy="413.4" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="507.0" cy="435.9" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="507.0" cy="517.6" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="576.2" cy="469.7" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="576.2" cy="391.6" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="576.2" cy="520.6" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="645.3" cy="497.9" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="645.3" cy="369.4" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="645.3" cy="521.5" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="714.5" cy="499.6" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="714.5" cy="467.4" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="714.5" cy="520.6" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="783.7" cy="497.1" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="783.7" cy="490.4" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="783.7" cy="519.3" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="852.8" cy="498.1" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="852.8" cy="497.2" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="852.8" cy="518.7" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<circle cx="922.0" cy="499.1" r="4.5" fill="#fff" stroke="#176B87" stroke-width="2.5"/>
+<circle cx="922.0" cy="499.5" r="4.5" fill="#fff" stroke="#C44A35" stroke-width="2.5"/>
+<circle cx="922.0" cy="518.5" r="4.5" fill="#fff" stroke="#5B7F36" stroke-width="2.5"/>
+<line x1="652" y1="15" x2="680" y2="15" stroke="#176B87" stroke-width="3"/>
+<text class="legend" x="688" y="20">SAD vs PennyLane</text>
+<line x1="652" y1="36" x2="680" y2="36" stroke="#C44A35" stroke-width="3" stroke-dasharray="8 5"/>
+<text class="legend" x="688" y="41">SAD vs cuQuantum</text>
+<line x1="652" y1="57" x2="680" y2="57" stroke="#5B7F36" stroke-width="3" stroke-dasharray="3 4"/>
+<text class="legend" x="688" y="62">cuQuantum vs PennyLane</text>
+<text class="label" x="507.0" y="578" text-anchor="middle">Number of qubits</text>
+<text class="label" transform="translate(25 296.0) rotate(-90)" text-anchor="middle">Speedup over PennyLane QNode</text>
+</svg>

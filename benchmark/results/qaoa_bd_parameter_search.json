@@ -1,0 +1,682 @@
+{
+  "circuit": "qaoa-bd",
+  "csv": "/home/rzzhang/sad_merged/benchmark/results/qaoa_bd_parameter_search.csv",
+  "json": "/home/rzzhang/sad_merged/benchmark/results/qaoa_bd_parameter_search.json",
+  "layers": 8,
+  "steps": 5,
+  "warmup_steps": 2,
+  "updated_utc": "2026-08-18T22:04:11.296487+00:00",
+  "completed_rows": 390,
+  "failed_rows": 26,
+  "fastest": {
+    "median_ms": 0.174983,
+    "candidate_key": "reduction:4:479b55498f98d2fd",
+    "stage": "reduction",
+    "circuit": "qaoa-bd",
+    "qubits": 4,
+    "config": {
+      "backward_register_bits": 2,
+      "backward_threads": 32,
+      "diagonal_threads": 64,
+      "diagonal_warp_atomic": 0,
+      "forward_register_bits": 2,
+      "forward_threads": 32,
+      "legacy_reduction": 0,
+      "lookup_bits": 8,
+      "mailbox_chunks": 1,
+      "ordinary_threads": 64,
+      "qaoa_bd_fusion": 1,
+      "rotation_warp_atomic": 1,
+      "shared_diagonal_threads": 128
+    }
+  },
+  "slowest": {
+    "median_ms": 17106.668289,
+    "candidate_key": "fusion:28:5175c2c3e8ebabc0",
+    "stage": "fusion",
+    "circuit": "qaoa-bd",
+    "qubits": 28,
+    "config": {
+      "backward_register_bits": 2,
+      "backward_threads": 128,
+      "diagonal_threads": 64,
+      "diagonal_warp_atomic": 0,
+      "forward_register_bits": 2,
+      "forward_threads": 128,
+      "legacy_reduction": 1,
+      "lookup_bits": 8,
+      "mailbox_chunks": 1,
+      "ordinary_threads": 128,
+      "qaoa_bd_fusion": 0,
+      "rotation_warp_atomic": 0,
+      "shared_diagonal_threads": 128
+    }
+  },
+  "average_median_ms": 319.3924525871795,
+  "by_qubits": {
+    "4": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 0.174983,
+        "candidate_key": "reduction:4:479b55498f98d2fd",
+        "stage": "reduction",
+        "circuit": "qaoa-bd",
+        "qubits": 4,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.427195,
+        "candidate_key": "fusion:4:385ca0d5ecf5279b",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 4,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.23844296666666667
+    },
+    "6": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 0.20437,
+        "candidate_key": "backward_shape:6:254c4a63eb3bb97e",
+        "stage": "backward_shape",
+        "circuit": "qaoa-bd",
+        "qubits": 6,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.567476,
+        "candidate_key": "fusion:6:567b910f195aab23",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 6,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.2935975333333333
+    },
+    "8": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 0.24676700000000001,
+        "candidate_key": "reduction:8:724c6c98b9c40dae",
+        "stage": "reduction",
+        "circuit": "qaoa-bd",
+        "qubits": 8,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 64,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 0.761351,
+        "candidate_key": "fusion:8:b6db88d84f7da666",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 8,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.370557
+    },
+    "10": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 0.345156,
+        "candidate_key": "reduction:10:ebb1749897280c31",
+        "stage": "reduction",
+        "circuit": "qaoa-bd",
+        "qubits": 10,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1.015796,
+        "candidate_key": "fusion:10:99db7cc9a85a8c8e",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 10,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.5005006333333334
+    },
+    "12": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 0.45268,
+        "candidate_key": "reduction:12:4ac675ef59cc472a",
+        "stage": "reduction",
+        "circuit": "qaoa-bd",
+        "qubits": 12,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1.2624619999999998,
+        "candidate_key": "fusion:12:6cc2897300a09c04",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 12,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.6600401666666667
+    },
+    "14": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 0.7378969999999999,
+        "candidate_key": "backward_shape:14:9e8464acb8269a24",
+        "stage": "backward_shape",
+        "circuit": "qaoa-bd",
+        "qubits": 14,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 1.7675049999999999,
+        "candidate_key": "fusion:14:99c3666417586dd8",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 14,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 0.9950672333333334
+    },
+    "16": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 1.5563270000000002,
+        "candidate_key": "reduction:16:a9bdb2e9f4b10d5d",
+        "stage": "reduction",
+        "circuit": "qaoa-bd",
+        "qubits": 16,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 3.466355,
+        "candidate_key": "fusion:16:ad875067108954df",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 16,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 2.3055263
+    },
+    "18": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 2.926451,
+        "candidate_key": "ordinary_threads:18:74a365fe040510f6",
+        "stage": "ordinary_threads",
+        "circuit": "qaoa-bd",
+        "qubits": 18,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 256,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 6.171500999999999,
+        "candidate_key": "fusion:18:228cb82bd703230a",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 18,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 3.7289702333333334
+    },
+    "20": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 7.78544,
+        "candidate_key": "reduction:20:3f4372840f43cf0d",
+        "stage": "reduction",
+        "circuit": "qaoa-bd",
+        "qubits": 20,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 32,
+          "legacy_reduction": 0,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 1,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 17.123684,
+        "candidate_key": "fusion:20:78da0707389375b4",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 20,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 8.925800266666666
+    },
+    "22": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 29.875609999999998,
+        "candidate_key": "ordinary_threads:22:1c845aa432211c34",
+        "stage": "ordinary_threads",
+        "circuit": "qaoa-bd",
+        "qubits": 22,
+        "config": {
+          "backward_register_bits": 3,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 64,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 199.98423599999998,
+        "candidate_key": "fusion:22:c305c55cd22305ea",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 22,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 37.6053147
+    },
+    "24": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 130.111074,
+        "candidate_key": "ordinary_threads:24:6065643f95963651",
+        "stage": "ordinary_threads",
+        "circuit": "qaoa-bd",
+        "qubits": 24,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 903.6033450000001,
+        "candidate_key": "fusion:24:6620617abff465f9",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 24,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 164.21116590000003
+    },
+    "26": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 548.268027,
+        "candidate_key": "ordinary_threads:26:d9d4a1b677d2d7c1",
+        "stage": "ordinary_threads",
+        "circuit": "qaoa-bd",
+        "qubits": 26,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 32,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 4,
+          "forward_threads": 32,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 3900.8973650000007,
+        "candidate_key": "fusion:26:44b5bebeef2127de",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 26,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 712.1049796000001
+    },
+    "28": {
+      "completed_rows": 30,
+      "fastest": {
+        "median_ms": 2476.3259609999996,
+        "candidate_key": "ordinary_threads:28:e1fd3202a0e1b2d1",
+        "stage": "ordinary_threads",
+        "circuit": "qaoa-bd",
+        "qubits": 28,
+        "config": {
+          "backward_register_bits": 4,
+          "backward_threads": 64,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 3,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 64,
+          "qaoa_bd_fusion": 1,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "slowest": {
+        "median_ms": 17106.668289,
+        "candidate_key": "fusion:28:5175c2c3e8ebabc0",
+        "stage": "fusion",
+        "circuit": "qaoa-bd",
+        "qubits": 28,
+        "config": {
+          "backward_register_bits": 2,
+          "backward_threads": 128,
+          "diagonal_threads": 64,
+          "diagonal_warp_atomic": 0,
+          "forward_register_bits": 2,
+          "forward_threads": 128,
+          "legacy_reduction": 1,
+          "lookup_bits": 8,
+          "mailbox_chunks": 1,
+          "ordinary_threads": 128,
+          "qaoa_bd_fusion": 0,
+          "rotation_warp_atomic": 0,
+          "shared_diagonal_threads": 128
+        }
+      },
+      "average_median_ms": 3220.1619211
+    }
+  }
+}

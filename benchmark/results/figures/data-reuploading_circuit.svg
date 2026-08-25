@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="555" viewBox="0 0 1200 555">
+<rect width="100%" height="100%" fill="#fff"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#24323d;letter-spacing:0}.title{font-size:24px;font-weight:700}.sub{font-size:14px;fill:#6b747c}.q{font-size:15px;font-weight:600}.gate{font-size:14px;font-weight:700}.small{font-size:12px;fill:#59636b}.phase{font-size:13px;font-weight:700}</style>
+<text class="title" x="70" y="36">Data Re-uploading circuit (6-qubit example)</text>
+<text class="sub" x="70" y="59">Two consecutive layers show the alternating even/odd brickwork CZ topology</text>
+<text class="q" x="70" y="113" text-anchor="end">q0</text>
+<line x1="92" y1="108" x2="1140" y2="108" stroke="#8a949c" stroke-width="1.5"/>
+<text class="q" x="70" y="161" text-anchor="end">q1</text>
+<line x1="92" y1="156" x2="1140" y2="156" stroke="#8a949c" stroke-width="1.5"/>
+<text class="q" x="70" y="209" text-anchor="end">q2</text>
+<line x1="92" y1="204" x2="1140" y2="204" stroke="#8a949c" stroke-width="1.5"/>
+<text class="q" x="70" y="257" text-anchor="end">q3</text>
+<line x1="92" y1="252" x2="1140" y2="252" stroke="#8a949c" stroke-width="1.5"/>
+<text class="q" x="70" y="305" text-anchor="end">q4</text>
+<line x1="92" y1="300" x2="1140" y2="300" stroke="#8a949c" stroke-width="1.5"/>
+<text class="q" x="70" y="353" text-anchor="end">q5</text>
+<line x1="92" y1="348" x2="1140" y2="348" stroke="#8a949c" stroke-width="1.5"/>
+<rect x="105" y="78" width="505" height="304" rx="5" fill="#e5efd9" fill-opacity="0.22" stroke="#5b7f36" stroke-dasharray="5 4"/>
+<text class="phase" x="357.5" y="70" text-anchor="middle" fill="#5b7f36">layer l (even)</text>
+<rect x="136.0" y="89" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="165" y="113" text-anchor="middle">RZ(z)</text>
+<rect x="226.0" y="89" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="255" y="113" text-anchor="middle">RY(y)</text>
+<rect x="316.0" y="89" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="345" y="113" text-anchor="middle">RZ(x)</text>
+<rect x="136.0" y="137" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="165" y="161" text-anchor="middle">RZ(z)</text>
+<rect x="226.0" y="137" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="255" y="161" text-anchor="middle">RY(y)</text>
+<rect x="316.0" y="137" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="345" y="161" text-anchor="middle">RZ(x)</text>
+<rect x="136.0" y="185" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="165" y="209" text-anchor="middle">RZ(z)</text>
+<rect x="226.0" y="185" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="255" y="209" text-anchor="middle">RY(y)</text>
+<rect x="316.0" y="185" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="345" y="209" text-anchor="middle">RZ(x)</text>
+<rect x="136.0" y="233" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="165" y="257" text-anchor="middle">RZ(z)</text>
+<rect x="226.0" y="233" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="255" y="257" text-anchor="middle">RY(y)</text>
+<rect x="316.0" y="233" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="345" y="257" text-anchor="middle">RZ(x)</text>
+<rect x="136.0" y="281" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="165" y="305" text-anchor="middle">RZ(z)</text>
+<rect x="226.0" y="281" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="255" y="305" text-anchor="middle">RY(y)</text>
+<rect x="316.0" y="281" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="345" y="305" text-anchor="middle">RZ(x)</text>
+<rect x="136.0" y="329" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="165" y="353" text-anchor="middle">RZ(z)</text>
+<rect x="226.0" y="329" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="255" y="353" text-anchor="middle">RY(y)</text>
+<rect x="316.0" y="329" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="345" y="353" text-anchor="middle">RZ(x)</text>
+<line x1="435" y1="108" x2="435" y2="156" stroke="#5b7f36" stroke-width="2"/>
+<circle cx="435" cy="108" r="6" fill="#5b7f36"/>
+<circle cx="435" cy="156" r="6" fill="#5b7f36"/>
+<line x1="497" y1="204" x2="497" y2="252" stroke="#5b7f36" stroke-width="2"/>
+<circle cx="497" cy="204" r="6" fill="#5b7f36"/>
+<circle cx="497" cy="252" r="6" fill="#5b7f36"/>
+<line x1="559" y1="300" x2="559" y2="348" stroke="#5b7f36" stroke-width="2"/>
+<circle cx="559" cy="300" r="6" fill="#5b7f36"/>
+<circle cx="559" cy="348" r="6" fill="#5b7f36"/>
+<text class="small" x="375" y="410" text-anchor="middle">RZ -> RY -> RZ -> CZ matching</text>
+<rect x="665" y="78" width="505" height="304" rx="5" fill="#e5efd9" fill-opacity="0.22" stroke="#5b7f36" stroke-dasharray="5 4"/>
+<text class="phase" x="917.5" y="70" text-anchor="middle" fill="#5b7f36">layer l+1 (odd)</text>
+<rect x="696.0" y="89" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="725" y="113" text-anchor="middle">RZ(z)</text>
+<rect x="786.0" y="89" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="815" y="113" text-anchor="middle">RY(y)</text>
+<rect x="876.0" y="89" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="905" y="113" text-anchor="middle">RZ(x)</text>
+<rect x="696.0" y="137" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="725" y="161" text-anchor="middle">RZ(z)</text>
+<rect x="786.0" y="137" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="815" y="161" text-anchor="middle">RY(y)</text>
+<rect x="876.0" y="137" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="905" y="161" text-anchor="middle">RZ(x)</text>
+<rect x="696.0" y="185" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="725" y="209" text-anchor="middle">RZ(z)</text>
+<rect x="786.0" y="185" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="815" y="209" text-anchor="middle">RY(y)</text>
+<rect x="876.0" y="185" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="905" y="209" text-anchor="middle">RZ(x)</text>
+<rect x="696.0" y="233" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="725" y="257" text-anchor="middle">RZ(z)</text>
+<rect x="786.0" y="233" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="815" y="257" text-anchor="middle">RY(y)</text>
+<rect x="876.0" y="233" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="905" y="257" text-anchor="middle">RZ(x)</text>
+<rect x="696.0" y="281" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="725" y="305" text-anchor="middle">RZ(z)</text>
+<rect x="786.0" y="281" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="815" y="305" text-anchor="middle">RY(y)</text>
+<rect x="876.0" y="281" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="905" y="305" text-anchor="middle">RZ(x)</text>
+<rect x="696.0" y="329" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="725" y="353" text-anchor="middle">RZ(z)</text>
+<rect x="786.0" y="329" width="58" height="38" rx="4" fill="#e5efd9" stroke="#5b7f36" stroke-width="1.7"/>
+<text class="gate" x="815" y="353" text-anchor="middle">RY(y)</text>
+<rect x="876.0" y="329" width="58" height="38" rx="4" fill="#d8eef4" stroke="#176b87" stroke-width="1.7"/>
+<text class="gate" x="905" y="353" text-anchor="middle">RZ(x)</text>
+<line x1="995" y1="156" x2="995" y2="204" stroke="#5b7f36" stroke-width="2"/>
+<circle cx="995" cy="156" r="6" fill="#5b7f36"/>
+<circle cx="995" cy="204" r="6" fill="#5b7f36"/>
+<line x1="1057" y1="252" x2="1057" y2="300" stroke="#5b7f36" stroke-width="2"/>
+<circle cx="1057" cy="252" r="6" fill="#5b7f36"/>
+<circle cx="1057" cy="300" r="6" fill="#5b7f36"/>
+<line x1="1119" y1="348" x2="1119" y2="108" stroke="#5b7f36" stroke-width="2"/>
+<circle cx="1119" cy="348" r="6" fill="#5b7f36"/>
+<circle cx="1119" cy="108" r="6" fill="#5b7f36"/>
+<text class="small" x="935" y="410" text-anchor="middle">RZ -> RY -> RZ -> CZ matching</text>
+<text class="small" x="70" y="480">Even pairs: (0,1), (2,3), (4,5)   |   Odd pairs: (1,2), (3,4), (5,0)</text>
+<text class="small" x="1135" y="480" text-anchor="end">Observable: Z on q0</text>
+</svg>
