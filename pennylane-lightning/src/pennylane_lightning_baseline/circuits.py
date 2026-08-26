@@ -217,19 +217,7 @@ def _qaoa_ns_bd(params: object, qubits: int, layers: int) -> None:
 
 
 def _xxz_hva(params: object, qubits: int, layers: int) -> None:
-    for wire in range(1, qubits, 2):
-        qml.PauliX(wires=wire)
-    for layer in range(layers):
-        base = layer * 3 * qubits
-        x_offset = base
-        y_offset = base + qubits
-        z_offset = base + 2 * qubits
-        for parity in (0, 1):
-            for left in range(parity, qubits, 2):
-                wires = (left, (left + 1) % qubits)
-                qml.IsingXX(params[x_offset + left], wires=wires)
-                qml.IsingYY(params[y_offset + left], wires=wires)
-                qml.IsingZZ(params[z_offset + left], wires=wires)
+    _xxz_hva_bd(params, qubits, layers)
 
 
 def _xxz_hva_bd(params: object, qubits: int, layers: int) -> None:

@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-qiskit/
 benchmark/results/*.csv
 !benchmark/results/rotation_deep_dive.csv
 !benchmark/results/rotation_full_circuit.csv

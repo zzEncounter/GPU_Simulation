@@ -167,22 +167,17 @@ def test_qaoa_ns_bd_matches_qaoa_ns_energy_and_gradient():
     )
 
 
-def test_xxz_hva_checkerboard_pairing_and_axis_major_parameters():
+def test_xxz_hva_expands_pauli_rotations_with_axis_major_parameters():
     spec = get_circuit("xxz-hva")
     params = np.arange(spec.parameter_count(4, 1), dtype=np.float64)
     with qml.tape.QuantumTape() as tape:
         spec.apply(params, 4, 1)
-    assert [op.name for op in tape.operations[:2]] == ["PauliX", "PauliX"]
-    bonds = tape.operations[2:]
-    assert [op.name for op in bonds] == ["IsingXX", "IsingYY", "IsingZZ"] * 4
-    assert [tuple(op.wires) for op in bonds[::3]] == [
-        (0, 1),
-        (2, 3),
-        (1, 2),
-        (3, 0),
-    ]
+    names = [op.name for op in tape.operations]
+    assert names[:2] == ["PauliX", "PauliX"]
+    assert not any(name in {"IsingXX", "IsingYY", "IsingZZ"} for name in names)
+    assert names.count("CNOT") == 24
     np.testing.assert_array_equal(
-        [op.data[0] for op in bonds],
+        [op.data[0] for op in tape.operations if op.name == "RZ"],
         [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11],
     )
 

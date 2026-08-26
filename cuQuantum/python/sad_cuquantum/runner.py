@@ -249,26 +249,23 @@ def build_gates(circuit: str, qubits: int, layers: int,
             for parity in (0, 1):
                 for edge in range(parity, qubits, 2):
                     right = (edge + 1) % qubits
-                    if name == "xxz-hva-bd":
-                        for wire in (edge, right): _add_h(gates, wire)
-                        _add_cnot(gates, edge, right)
-                        _add(gates, "rz", right, base + edge, params[base + edge])
-                        _add_cnot(gates, edge, right)
-                        for wire in (edge, right): _add_h(gates, wire)
-                        _add(gates, "rx", edge, None, math.pi / 2)
-                        _add(gates, "rx", right, None, math.pi / 2)
-                        _add_cnot(gates, edge, right)
-                        _add(gates, "rz", right, base + qubits + edge, params[base + qubits + edge])
-                        _add_cnot(gates, edge, right)
-                        _add(gates, "rx", edge, None, -math.pi / 2)
-                        _add(gates, "rx", right, None, -math.pi / 2)
-                        _add_cnot(gates, edge, right)
-                        _add(gates, "rz", right, base + 2 * qubits + edge, params[base + 2 * qubits + edge])
-                        _add_cnot(gates, edge, right)
-                    else:
-                        _add_rzz(gates, edge, right, base + 2 * qubits + edge, params[base + 2 * qubits + edge])
-                        _add(gates, "rx", edge, base + edge, params[base + edge])
-                        _add(gates, "rx", right, base + right, params[base + right])
+                    # cuStateVec is driven through the primitive gate API, so
+                    # decompose RXX/RYY/RZZ for both public XXZ variants.
+                    for wire in (edge, right): _add_h(gates, wire)
+                    _add_cnot(gates, edge, right)
+                    _add(gates, "rz", right, base + edge, params[base + edge])
+                    _add_cnot(gates, edge, right)
+                    for wire in (edge, right): _add_h(gates, wire)
+                    _add(gates, "rx", edge, None, math.pi / 2)
+                    _add(gates, "rx", right, None, math.pi / 2)
+                    _add_cnot(gates, edge, right)
+                    _add(gates, "rz", right, base + qubits + edge, params[base + qubits + edge])
+                    _add_cnot(gates, edge, right)
+                    _add(gates, "rx", edge, None, -math.pi / 2)
+                    _add(gates, "rx", right, None, -math.pi / 2)
+                    _add_cnot(gates, edge, right)
+                    _add(gates, "rz", right, base + 2 * qubits + edge, params[base + 2 * qubits + edge])
+                    _add_cnot(gates, edge, right)
         return gates
     if name == "mera":
         active = list(range(qubits)); cursor = 0

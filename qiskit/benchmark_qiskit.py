@@ -5,7 +5,7 @@ results can be compared column-by-column.  Edit the constants below; this
 script intentionally has no CLI arguments.
 
 Key difference vs PennyLane:
-  Each gradient step requires  2 * n_circuit_params  expectation-value
+  Each gradient step requires  2 * n_circuit_params + 1  expectation-value
   evaluations (parameter shift rule), whereas PennyLane's adjoint method
   needs only O(1) circuit executions regardless of parameter count.
 """
@@ -26,7 +26,12 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Configuration (edit here; no argparse)
 # ---------------------------------------------------------------------------
-CIRCUITS = ("ra-hea", "su2-hea", "rzz-hea")
+# Run every registered circuit except the three ``bd`` variants.  The
+# resulting nine-circuit set keeps the benchmark aligned with the full
+# non-bd baseline while avoiding duplicate bonded-data variants.
+CIRCUITS = (
+    "data-reuploading",
+)
 QUBITS = tuple(range(4, 29, 2))
 LAYERS = 8
 RANDOM_SEED = 42
@@ -34,7 +39,7 @@ BATCHES = 1
 PRECISION = "float64"
 WARMUP_STEPS = 1
 GPU = True
-OUTPUT_CSV = Path(__file__).resolve().parent / "results" / "qiskit_aer_gpu.csv"
+OUTPUT_CSV = Path(__file__).resolve().parent / "results" / "qiskit_aer_gpu_reuploading.csv"
 OVERWRITE_OUTPUT = True
 
 # Fewer steps per size than PennyLane because each step is O(N) more expensive.
@@ -71,7 +76,7 @@ CSV_FIELDS = (
     "batches",
     "warmup_steps",
     "steps",
-    "evaluations_per_step",   # = 2 * n_circuit_params
+    "evaluations_per_step",   # = 2 * n_circuit_params + 1
     "energy",
     "grad_json",
     "grad_l2_norm",
@@ -133,7 +138,7 @@ def _success_row(result, steps: int, n_circuit_params: int) -> dict[str, object]
         "batches": result.batches,
         "warmup_steps": result.warmup_steps,
         "steps": steps,
-        "evaluations_per_step": 2 * n_circuit_params,
+        "evaluations_per_step": 2 * n_circuit_params + 1,
         "energy": result.energy,
         "grad_json": json.dumps(result.grad.tolist(), separators=(",", ":")),
         "grad_l2_norm": float(np.linalg.norm(result.grad)),
@@ -198,7 +203,7 @@ def main() -> None:
                     print(
                         f"{label}: median={result.median_step_time_s:.6f}s, "
                         f"energy={result.energy:.10g}, "
-                        f"n_evals_per_step={2 * n_circuit_params}",
+                        f"n_evals_per_step={2 * n_circuit_params + 1}",
                         flush=True,
                     )
                 except Exception as exc:  # noqa: BLE001

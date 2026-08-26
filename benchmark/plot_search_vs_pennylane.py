@@ -1,10 +1,11 @@
 """Generate per-circuit linear-axis SAD-vs-PennyLane speedup SVG plots."""
 from __future__ import annotations
 
+import base64
 import csv
 import html
+import re
 import statistics
-from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,9 +32,15 @@ def baseline_pennylane() -> dict[tuple[str, int], float]:
         "native_baseline_comparison_qaoans.csv",
         "native_baseline_comparison_mera.csv",
     ):
-        for row in read_csv(ROOT / "benchmark" / "results" / name):
+        path = ROOT / "benchmark" / "results" / name
+        if not path.exists():
+            continue
+        for row in read_csv(path):
             if row.get("pennylane_qnode_time_median_s"):
                 result[row["circuit"], int(row["qubits"])] = float(row["pennylane_qnode_time_median_s"]) * 1000
+    for row in read_csv(ROOT / "benchmark" / "results" / "xxz_hva_pennylane_gpu.csv"):
+        if row.get("status") == "ok" and row.get("time_median_s"):
+            result["xxz-hva", int(row["qubits"])] = float(row["time_median_s"]) * 1000
     return result
 
 
@@ -62,21 +69,11 @@ def mera_stats() -> dict[int, list[float]]:
 
 
 def xxz_stats() -> dict[int, list[float]]:
-    rows = [r for r in read_csv(ROOT / "benchmark" / "results" / "xxz_search_raw.csv")
-            if r["stage"] == "partition" and r["component"] == "xx+yy+zz"]
-    # The historical file contains three repetitions for each of the four
-    # direction/parity matching scenarios. Average repetitions first, then
-    # sum the four scenarios to obtain one candidate runtime.
-    grouped: dict[tuple[str, str, str, str, str], list[float]] = defaultdict(list)
-    for row in rows:
-        grouped[row["variant"], row["candidate"], row["qubits"], row["direction"], row["parity"]].append(float(row["average_ms"]))
+    rows = [r for r in read_csv(ROOT / "benchmark" / "results" / "joint_phase" / "xxz-hva-e2e.csv")
+            if r.get("status") == "ok" and r.get("median_ms")]
     result = {}
     for q in QUbits:
-        candidates: dict[tuple[str, str, str], list[float]] = defaultdict(list)
-        for (variant, candidate, qubits, _direction, _parity), repetitions in grouped.items():
-            if int(qubits) == q:
-                candidates[variant, candidate, qubits].append(statistics.fmean(repetitions))
-        values = [sum(scenarios) for scenarios in candidates.values() if len(scenarios) == 4]
+        values = [float(r["median_ms"]) for r in rows if int(r["qubits"]) == q]
         if values:
             result[q] = [min(values), statistics.fmean(values), statistics.median(values), max(values)]
     return result
@@ -118,10 +115,20 @@ def svg_plot(circuit: str, ratios: dict[str, dict[int, float]], ymax: float) -> 
         lx = legend_x + i * 190
         parts += [f'<line x1="{lx}" y1="{legend_y}" x2="{lx+28}" y2="{legend_y}" stroke="{COLORS[key]}" stroke-width="3"/>',
                   f'<text x="{lx+36}" y="{legend_y+5}" font-family="Arial" font-size="13">{LABELS[key]}</text>']
-    if circuit == "xxz-hva":
-        parts.append(f'<text x="{width-right}" y="{height-25}" text-anchor="end" font-family="Arial" font-size="11" fill="#555">historical matching microbenchmark; q=20,24,26</text>')
     parts.append('</svg>')
     return "\n".join(parts)
+
+
+def embed_plot(circuit: str, path: Path) -> None:
+    summary = ROOT / "docs" / "search" / "JOINT_PHASE_SEARCH_RUNTIME_SUMMARY.md"
+    markdown = summary.read_text(encoding="utf-8")
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    pattern = rf"!\[{re.escape(circuit)} speedup vs PennyLane\]\(data:image/svg\+xml;base64,[A-Za-z0-9+/=]+\)"
+    replacement = f"![{circuit} speedup vs PennyLane](data:image/svg+xml;base64,{encoded})"
+    markdown, count = re.subn(pattern, replacement, markdown)
+    if count != 1:
+        raise ValueError(f"expected one embedded plot for {circuit}, found {count}")
+    summary.write_text(markdown, encoding="utf-8")
 
 
 def main() -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import gc
 import json
+import math
 import statistics
 import sys
 import time
@@ -23,7 +24,6 @@ sys.path.insert(0, str(ROOT / "cuQuantum" / "python"))
 
 from sad_cuquantum.runner import (  # noqa: E402
     expected_parameter_count,
-    random_parameters,
     run,
 )
 
@@ -160,7 +160,10 @@ def _success_row(
 def _run_case(
     circuit: str, qubits: int, layers: int, steps: int
 ) -> tuple[dict[str, object], list[float]]:
-    params = random_parameters(circuit, qubits, layers, RANDOM_SEED)
+    parameter_count = expected_parameter_count(circuit, qubits, layers)
+    params = np.random.default_rng(RANDOM_SEED).uniform(
+        -math.pi, math.pi, parameter_count
+    )
 
     for _ in range(WARMUP_STEPS):
         run(circuit, qubits, layers, params, PRECISION)

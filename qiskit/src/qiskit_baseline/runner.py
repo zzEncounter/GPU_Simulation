@@ -12,7 +12,7 @@ current values.  This correctly handles shared parameters (e.g. equivariant-qnn,
 QAOA) because the total derivative equals the sum of partial derivatives, each
 of which is computed by the standard parameter-shift formula.
 
-Cost: 2 * n_circuit_params expectation-value evaluations per gradient step,
+Cost: 2 * n_circuit_params + 1 expectation-value evaluations per gradient step,
 compared to O(1) for PennyLane's adjoint-differentiation method.
 """
 
@@ -117,15 +117,26 @@ class EnergyGradResult:
 # Evaluator
 # ---------------------------------------------------------------------------
 
+def _exact_aer_estimator(backend):
+    """Build an exact Aer EstimatorV2 matching the simulator configuration."""
+    from qiskit_aer.primitives import EstimatorV2
+
+    backend_options = {
+        "method": backend.options.method,
+        "device": backend.options.device,
+        "precision": backend.options.precision,
+        "cuStateVec_enable": backend.options.cuStateVec_enable,
+    }
+    return EstimatorV2(options={"backend_options": backend_options})
+
+
 class _Evaluator:
-    """Wraps a BackendEstimatorV2 for repeated expectation-value queries."""
+    """Wraps an exact Aer EstimatorV2 for expectation-value queries."""
 
     def __init__(self, bundle: CircuitBundle, hamiltonian, backend) -> None:
-        from qiskit.primitives import BackendEstimatorV2
-
         self._bundle = bundle
         self._hamiltonian = hamiltonian
-        self._estimator = BackendEstimatorV2(backend=backend)
+        self._estimator = _exact_aer_estimator(backend)
 
     def __call__(self, model_values: np.ndarray) -> float:
         """Evaluate ⟨H⟩ for the given model-parameter values."""
@@ -153,12 +164,12 @@ def _parameter_shift_grad(
     circuit-parameter shift pair of the first model parameter, and grad is
     the full model-parameter gradient vector.
 
-    Total circuit evaluations: 2 * n_circuit_params.
+    Total circuit evaluations: 2 * n_circuit_params + 1 (the extra evaluation
+    returns the energy at the unshifted parameter values).
     """
     n_model = bundle.n_model_params
     n_circuit = len(bundle.param_list)
     grad = np.zeros(n_model, dtype=model_values.dtype)
-    energy = None
 
     for c_idx in range(n_circuit):
         model_idx = bundle.param_map[c_idx]
@@ -176,9 +187,9 @@ def _parameter_shift_grad(
         partial = (e_plus - e_minus) / 2.0
         grad[model_idx] += partial
 
-        # Use the midpoint as an energy estimate for the first pair
-        if energy is None:
-            energy = (e_plus + e_minus) / 2.0
+    # The shift-pair average is not the energy at the unshifted point.  Evaluate
+    # that point explicitly after accumulating the parameter-shift gradient.
+    energy = evaluator.from_model(model_values)
 
     return float(energy), grad
 
@@ -231,11 +242,9 @@ class _EvaluatorRaw:
     """Evaluator that accepts a per-circuit-slot values array (length = n_circuit)."""
 
     def __init__(self, bundle: CircuitBundle, hamiltonian, backend) -> None:
-        from qiskit.primitives import BackendEstimatorV2
-
         self._bundle = bundle
         self._hamiltonian = hamiltonian
-        self._estimator = BackendEstimatorV2(backend=backend)
+        self._estimator = _exact_aer_estimator(backend)
 
     def __call__(self, circuit_values: np.ndarray) -> float:
         binding = {
@@ -286,9 +295,9 @@ def _parameter_shift_grad_v2(
 
         grad[model_idx] += (e_plus - e_minus) / 2.0
 
-        if energy is None:
-            energy = (e_plus + e_minus) / 2.0
-
+    # A shift-pair average is not the energy at the unshifted point.  Evaluate
+    # the base circuit explicitly after accumulating the gradient.
+    energy = evaluator(base_cv)
     return float(energy), grad
 
 
@@ -344,7 +353,7 @@ def energy_and_grad(
 ) -> EnergyGradResult:
     """Evaluate energy and full gradient via parameter shift rule.
 
-    Each "step" performs 2 * n_circuit_params expectation-value evaluations,
+    Each "step" performs 2 * n_circuit_params + 1 expectation-value evaluations,
     where n_circuit_params >= n_model_params (equality holds for circuits without
     shared parameters).
 
